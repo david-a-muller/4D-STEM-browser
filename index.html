@@ -70,6 +70,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     <option value="ws2">WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
     <option value="ws2b">WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
     <option value="ws2tc">WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
+    <option value="atom1">Single W atom, 200 Å underfocus (noise-free, 80 kV, 21.4 mrad)</option>
     <option value="atoms">Two W atoms: one at focus, one 20 nm below (noise-free, 80 kV, 21.4 mrad)</option>
     <option value="grains">Polycrystal + particle (separated disks)</option>
   </select>
@@ -747,7 +748,7 @@ async function rawDialog(f){
 // ---------------------------------------------------------------- synthetic demo
 $("demoSel").addEventListener("change",async()=>{
   const v=$("demoSel").value; $("demoSel").value="";
-  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
+  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="atom1") await demoAtoms(true); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
 });
 async function demoGrains(){
   busy("Generating demo dataset…"); await tick();
@@ -1077,20 +1078,20 @@ async function demoWS2(alphaMrad, dfA=0){
 }
 
 // ---------------------------------------------------------------- two single atoms at different heights (2-slice multislice)
-async function demoAtoms(){
-  busy("Simulating two single atoms…"); await tick();
+async function demoAtoms(single=false){
+  busy(single? "Simulating a single atom…" : "Simulating two single atoms…"); await tick();
   // 80 kV, 21.4 mrad, focused on atom A's plane. Atom B sits dz = 20 nm further along the beam:
   // probe → ×t_A → Fresnel propagate dz → ×t_B → far field. At B the probe is 200 Å overfocused (Δf = −200 Å, Kirkland sign).
-  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=0.0214, dz=200, dose=5e5, K=N*N, h=N/2;
+  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=0.0214, dz=200, dose=5e5, K=N*N, h=N/2, probeDf = single? 200 : 0; // single: Kirkland Δf=+200 Å (underfocus)
   const G=nS+N, o=G*dx/2, sig=0.35, PW=0.5;
   const mkT=(ax,ay)=>{ const re=new Float32Array(G*G), im=new Float32Array(G*G);
     for(let iy=0;iy<G;iy++) for(let ix=0;ix<G;ix++){ const r2=((ix*dx-ax)**2+(iy*dx-ay)**2), ph=PW*Math.exp(-r2/(2*sig*sig)); re[iy*G+ix]=Math.cos(ph); im[iy*G+ix]=Math.sin(ph); }
     return [re,im]; };
-  const [aR,aI]=mkT(o-4.6,o-3.0), [bR,bI]=mkT(o+4.6,o+3.0);   // A upper-left (in focus), B lower-right (20 nm below)
+  const [aR,aI]= single? mkT(o,o) : mkT(o-4.6,o-3.0), [bR,bI]= single? [null,null] : mkT(o+4.6,o+3.0);   // A upper-left (in focus), B lower-right (20 nm below)
   const fft=makeFFT(N), pr=new Float64Array(K), pi=new Float64Array(K), dk=1/(N*dx), kmax=alpha/lam, qr=new Float64Array(K), qi=new Float64Array(K);
   for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
     const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k2=fx*fx+fy*fy, A=Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5)), sgn=((ix+iy)&1)?-1:1;
-    pr[iy*N+ix]=sgn*A; pi[iy*N+ix]=0;
+    const chiP=-Math.PI*lam*probeDf*k2; pr[iy*N+ix]=sgn*A*Math.cos(-chiP); pi[iy*N+ix]=sgn*A*Math.sin(-chiP);
     const ph=-Math.PI*lam*dz*k2, bl = Math.sqrt(k2) < 0.95/(2*dx) ? 1 : 0; qr[iy*N+ix]=bl*Math.cos(ph)/K; qi[iy*N+ix]=bl*Math.sin(ph)/K; // propagator (÷K for unnormalised inverse FFT)
   }
   fft(pr,pi,true); let pn=0; for(let i=0;i<K;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<K;i++){ pr[i]/=pn; pi[i]/=pn; }
@@ -1101,18 +1102,21 @@ async function demoAtoms(){
     for(let sx=0;sx<nS;sx++){
       for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x; er[w]=pr[w]*aR[g]-pi[w]*aI[g]; ei[w]=pr[w]*aI[g]+pi[w]*aR[g]; } }
       fft(er,ei,false);
-      for(let i=0;i<K;i++){ const a=er[i], b=ei[i]; er[i]=a*qr[i]-b*qi[i]; ei[i]=a*qi[i]+b*qr[i]; }
-      fft(er,ei,true);
-      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
-      fft(er,ei,false);
+      if(!single){
+        for(let i=0;i<K;i++){ const a=er[i], b=ei[i]; er[i]=a*qr[i]-b*qi[i]; ei[i]=a*qi[i]+b*qr[i]; }
+        fft(er,ei,true);
+        for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
+        fft(er,ei,false);
+      }
       const bo=(sy*nS+sx)*K;
       for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y+h)%N)*N+((x+h)%N); data[bo+y*N+x]=(er[q]*er[q]+ei[q]*ei[q])/K*dose; /* noise-free (expected counts) */ }
     }
-    if((sy&3)===3){ busy(`Simulating two single atoms… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
+    if((sy&3)===3){ busy(`Simulating ${single?"a single atom":"two single atoms"}… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
-  await setData(data,nS,nS,N,N,"Two W atoms: A (upper left) at focus, B (lower right) 20 nm below (80 kV, 21.4 mrad, 0.4 A step, noise-free)");
+  await setData(data,nS,nS,N,N, single? "Single W atom, probe 200 A underfocus (80 kV, 21.4 mrad, 0.4 A step, noise-free)" : "Two W atoms: A (upper left) at focus, B (lower right) 20 nm below (80 kV, 21.4 mrad, 0.4 A step, noise-free)");
   S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:dx}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=dx; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=21.4;
   const r0=kmax/dk; Object.assign(S.det,{shape:"annulus", cx:N/2, cy:N/2, r:+(0.92*r0).toFixed(1), ri:+(r0+1).toFixed(1), ro:+Math.min(2.1*r0, N/2-1).toFixed(1)});
+  $("imLo").value=0; $("imHi").value=100; // sparse objects in vacuum: full-range contrast avoids magnifying tiny ripples
   $("signal").value="sum"; $("signal").dispatchEvent(new Event("change"));
   $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="annulus")); buildGeoInputs(); update(true,true);
 }
