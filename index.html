@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>4D-STEM Browser</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2b303b; --text:#e6e8ec; --muted:#9aa1ad;
+  --accent:#4fb3ff; --accent2:#ffb347; --danger:#ff6b6b;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size:14px; color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text)}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:16px;margin:0 8px 0 0;font-weight:650;letter-spacing:.2px}
+header .info{color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+button,.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 11px;font:inherit;cursor:pointer}
+button:hover,.btn:hover{border-color:#3d4452;background:#242935}
+button.primary{background:#1d4f78;border-color:#2a6a9e}
+button.primary:hover{background:#245d8c}
+select,input[type=number],input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:5px;padding:4px 6px;font:inherit;font-variant-numeric:tabular-nums}
+input[type=number]{width:72px}
+input[type=range]{accent-color:var(--accent);width:110px}
+main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 16px}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.ptitle{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
+.ptitle h2{font-size:14px;margin:0;font-weight:600}
+.readout{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.viewwrap{display:flex;justify-content:center}
+.view{position:relative;width:100%;aspect-ratio:var(--ar,1);max-width:calc(62vh * var(--ar,1));background:#000;touch-action:none;user-select:none}
+.view canvas{position:absolute;inset:0;width:100%;height:100%}
+.view canvas.base{image-rendering:pixelated}
+.view canvas.base.smooth{image-rendering:auto}
+.view canvas.ps{position:absolute;inset:auto;top:6px;right:6px;width:34%;height:auto;aspect-ratio:1;border:1px solid rgba(255,255,255,.45);border-radius:3px;box-shadow:0 2px 10px rgba(0,0,0,.6);cursor:crosshair;image-rendering:auto}
+.view canvas.ps.bl{top:auto;right:auto;bottom:6px;left:6px}.view canvas.ps.br{top:auto;bottom:6px}.view canvas.ps.tl{right:auto;left:6px}
+.controls{display:grid;grid-template-columns:auto 1fr;gap:7px 10px;align-items:center;margin-top:12px}
+.controls label.k{color:var(--muted);font-size:12px;white-space:nowrap}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;border-right:1px solid var(--line);padding:5px 10px;background:var(--bg)}
+.seg button:last-child{border-right:0}
+.seg button.on{background:#1d4f78;color:#fff}
+.geo span{color:var(--muted);font-size:12px}
+[hidden]{display:none!important}
+.status{padding:0 16px 14px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+#drop{position:fixed;inset:0;background:rgba(15,17,21,.85);border:3px dashed var(--accent);display:none;align-items:center;justify-content:center;font-size:20px;z-index:50}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40;padding:16px}
+#modal .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
+#modal h3{margin:0 0 10px;font-size:15px}
+#modal .grid{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;margin:12px 0}
+#modal .hint{color:var(--muted);font-size:12px;line-height:1.45}
+#modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+#busy{position:fixed;left:50%;top:70px;transform:translateX(-50%);background:#1d4f78;border:1px solid #2a6a9e;padding:8px 14px;border-radius:8px;display:none;z-index:60;font-variant-numeric:tabular-nums}
+.err{color:var(--danger)}
+textarea{width:100%;height:150px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;font:12px ui-monospace,Menlo,Consolas,monospace;padding:8px}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#666;font-size:13px;text-align:center;padding:20px;pointer-events:none}
+kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>4D-STEM Browser</h1>
+  <label class="btn primary" for="file">Open file…</label>
+  <input id="file" type="file" hidden accept=".h5,.hdf5,.emd,.py4dstem,.nxs,.tif,.tiff,.raw,.npy,.bin,.dat">
+  <select id="demoSel" title="Load a simulated dataset">
+    <option value="">Load demo data…</option>
+    <option value="ws2">WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
+    <option value="ws2b">WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
+    <option value="ws2tc">WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
+    <option value="atoms">Two W atoms: one at focus, one 20 nm below (80 kV, 21.4 mrad)</option>
+    <option value="grains">Polycrystal + particle (separated disks)</option>
+  </select>
+  <button id="saveBtn" disabled>Save image…</button>
+  <span class="info" id="info">HDF5 / EMD / py4DSTEM, TIFF stacks, EMPAD .raw, .npy. Drag a file anywhere.</span>
+</header>
+
+<main>
+  <section class="panel">
+    <div class="ptitle"><h2>Diffraction pattern</h2><span class="readout" id="dpRead"></span></div>
+    <div class="viewwrap"><div class="view" id="dpView"><canvas class="base" id="dpCan"></canvas><canvas id="dpOv"></canvas><div class="empty" id="dpEmpty">No data loaded</div></div></div>
+    <div class="controls">
+      <label class="k">Detector</label>
+      <div class="row"><div class="seg" id="detSeg">
+        <button data-v="point">Point</button><button data-v="circle" class="on">Circle</button><button data-v="annulus">Annulus</button><button data-v="rect">Rectangle</button>
+      </div></div>
+      <label class="k">Geometry</label>
+      <div class="row geo" id="geo"></div>
+      <label class="k">Signal</label>
+      <div class="row">
+        <select id="signal"><option value="sum">Integrated intensity</option><option value="comx">CoM x (col)</option><option value="comy">CoM y (row)</option><option value="comm">|CoM|</option><option value="tcbf">Tilt-corrected BF</option><option value="acbf">ACBF (aberration-corrected BF)</option><option value="idpc">iDPC (integrated CoM)</option></select>
+        <label class="k">Show</label>
+        <select id="dpShow"><option value="probe">Pattern at probe</option><option value="mean">Mean pattern</option><option value="max">Max pattern</option></select>
+      </div>
+      <label class="k tcrow" hidden>Optics</label>
+      <div class="row tcrow geo" hidden>
+        <span class="tconly">Δf (Å)</span><input class="tconly" type="number" id="tcDf" value="0" step="10" title="Defocus. Positive = underfocus (Kirkland convention: χ = πλk²(½Csλ²k² − Δf))">
+        <span>rot (°)</span><input type="number" id="tcRot" value="0" step="1" title="Rotation of detector axes relative to scan axes">
+        <label><input type="checkbox" id="tcFlip"> <span>flip</span></label>
+        <span>mrad/px</span><input type="number" id="tcMr" value="1" step="0.01" title="Detector angular pixel size">
+        <span>step (Å)</span><input type="number" id="tcSt" value="1" step="0.01" title="Scan step size">
+        <span>kV</span><input type="number" id="acKV" value="300" step="10">
+        <span class="tconly">upsample</span><select class="tconly" id="tcUp"><option>1</option><option selected>2</option><option>4</option></select>
+        <button class="tconly" id="tcFit" title="Cross-correlate the bright-field pixel images and solve for defocus and rotation">Fit Δf &amp; rotation</button>
+        <span class="readout" id="tcInfo"></span>
+      </div>
+      <label class="k acrow" hidden>ACBF</label>
+      <div class="row acrow geo" hidden>
+        <span>Cs (mm)</span><input type="number" id="acCs" value="0" step="0.001" title="Spherical aberration (0 for a corrected probe)">
+        <span>α (mrad)</span><input type="number" id="acAl" value="" step="0.1" title="Probe convergence semi-angle; blank = BF disk radius × mrad/px">
+        <span>ε</span><input type="number" id="acEps" value="0.02" step="0.01" min="0" title="Wiener regularisation, relative to the peak of Σ|T|²">
+        <span class="readout" id="acInfo"></span>
+      </div>
+      <label class="k idrow" hidden>iDPC</label>
+      <div class="row idrow geo" hidden>
+        <span>high-pass (Å)</span><input type="number" id="idHp" value="0" step="5" min="0" title="Suppress features larger than this length (0 = off). Adds (1/L)² to |g|²">
+        <button id="idFit" title="Find the detector rotation (and flip) that makes the CoM field curl-free">Fit rotation (min curl)</button>
+        <span class="readout" id="idInfo"></span>
+      </div>
+      <label class="k">Display</label>
+      <div class="row">
+        <select id="dpScale"><option value="lin">Linear</option><option value="sqrt">Sqrt</option><option value="log" selected>Log</option></select>
+        <select id="dpCmap"></select>
+        <div class="seg" id="dpInterp" title="Pixel display"><button data-v="sharp" class="on">Pixels</button><button data-v="smooth">Smooth</button></div>
+      </div>
+      <label class="k">Contrast</label>
+      <div class="row"><input type="range" id="dpLo" min="0" max="20" step="0.1" value="0"><input type="range" id="dpHi" min="90" max="100" step="0.05" value="99.9"><span class="readout" id="dpCl"></span></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="ptitle"><h2>Virtual image</h2><span class="readout" id="imRead"></span></div>
+    <div class="viewwrap"><div class="view" id="imView"><canvas class="base" id="imCan"></canvas><canvas id="imOv"></canvas><canvas id="psCan" class="ps" hidden title="Power spectrum of the virtual image (click to move to another corner)"></canvas><div class="empty" id="imEmpty">Open a file or load the demo</div></div></div>
+    <div class="controls">
+      <label class="k">Real-space</label>
+      <div class="row"><div class="seg" id="rsSeg"><button data-v="point" class="on">Point</button><button data-v="rect">Rectangle (avg)</button></div>
+        <span class="readout">x <input type="number" id="px" step="1"> y <input type="number" id="py" step="1"></span></div>
+      <label class="k">Display</label>
+      <div class="row"><select id="imCmap"></select><label class="k"><input type="checkbox" id="psOn"> Power spectrum</label><div class="seg" id="imInterp" title="Pixel display"><button data-v="sharp" class="on">Pixels</button><button data-v="smooth">Smooth</button></div></div>
+      <label class="k">Contrast</label>
+      <div class="row"><input type="range" id="imLo" min="0" max="20" step="0.1" value="0.5"><input type="range" id="imHi" min="80" max="100" step="0.05" value="99.5"><span class="readout" id="imCl"></span></div>
+      <label class="k">Export</label>
+      <div class="row"><button id="saveBtn2">Save PNG / PDF / CSV…</button><button id="snip">Copy detector as NumPy code</button></div>
+    </div>
+  </section>
+</main>
+<div class="status" id="status">Drag the detector to move it; drag its edge to resize. Click or drag in the virtual image to pick the probe position. <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> step the probe (<kbd>Shift</kbd> ×5).</div>
+
+<div id="drop">Drop a 4D-STEM file</div>
+<div id="busy"></div>
+<div id="modal"><div class="box" id="mbox"></div></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- state
+const S = {
+  data:null, ny:0, nx:0, ky:0, kx:0, N:0, K:0, name:"",
+  totals:null, meanDP:null, maxDP:null, gmax:1,
+  det:{shape:"circle", cx:0, cy:0, r:5, ri:10, ro:20, x0:0, y0:0, x1:10, y1:10},
+  probe:{x:0,y:0}, rsMode:"point", rsRect:null,
+  vimg:null, dpBuf:null, dpT:null, imT:null,
+};
+const $ = id => document.getElementById(id);
+
+// ---------------------------------------------------------------- colormaps
+const CM_ANCH = {
+  gray:["#000000","#ffffff"],
+  inferno:["#000004","#1b0c41","#4a0c6b","#781c6d","#a52c60","#cf4446","#ed6925","#fb9b06","#f7d13d","#fcffa4"],
+  viridis:["#440154","#482878","#3e4989","#31688e","#26828e","#1f9e89","#35b779","#6ece58","#b5de2b","#fde725"],
+  magma:["#000004","#180f3d","#440f76","#721f81","#9e2f7f","#cd4071","#f1605d","#fd9668","#feca8d","#fcfdbf"],
+  "RdBu (diverging)":["#2166ac","#67a9cf","#d1e5f0","#f7f7f7","#fddbc7","#ef8a62","#b2182b"],
+};
+const LUT = {};
+for (const [k,a] of Object.entries(CM_ANCH)){
+  const c = a.map(h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)));
+  const L = new Uint8Array(256*3);
+  for (let i=0;i<256;i++){ const t=i/255*(c.length-1), j=Math.min(c.length-2,Math.floor(t)), f=t-j;
+    for (let q=0;q<3;q++) L[i*3+q]=Math.round(c[j][q]*(1-f)+c[j+1][q]*f); }
+  LUT[k]=L;
+}
+for (const id of ["dpCmap","imCmap"]) for (const k of Object.keys(LUT)) $(id).add(new Option(k,k));
+$("dpCmap").value="inferno"; $("imCmap").value="gray";
+
+// ---------------------------------------------------------------- busy / modal
+function busy(msg){ const b=$("busy"); if(msg){b.textContent=msg;b.style.display="block";} else b.style.display="none"; }
+const tick = () => new Promise(r=>setTimeout(r,0));
+function modal(html){ $("mbox").innerHTML=html; $("modal").style.display="flex"; }
+function closeModal(){ $("modal").style.display="none"; }
+function showError(e){ console.error(e); busy(); modal(`<h3 class="err">Could not load the file</h3><div class="hint">${String(e && e.message || e).replace(/</g,"&lt;")}</div><div class="actions"><button onclick="closeModal()">OK</button></div>`); }
+
+// ---------------------------------------------------------------- helpers
+function factorGuess(n){ let best=[1,n]; for(let a=1;a*a<=n;a++) if(n%a===0) best=[a,n/a]; return best; } // [rows, cols] most square
+function percentiles(arr, lo, hi){
+  const n=arr.length, step=Math.max(1,Math.floor(n/250000)), tmp=new Float32Array(Math.ceil(n/step)); let j=0;
+  for(let i=0;i<n;i+=step){const v=arr[i]; if(Number.isFinite(v)) tmp[j++]=v;}
+  if(!j) return [0,1];
+  const s=tmp.subarray(0,j).sort();
+  return [s[Math.floor(lo/100*(j-1))], s[Math.floor(hi/100*(j-1))]];
+}
+function render(canvas, T, w, h, lo, hi, lut){
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+  const ctx=canvas.getContext("2d"), img=ctx.createImageData(w,h), d=img.data;
+  const sc = hi>lo ? 255/(hi-lo) : 0;
+  for(let i=0,n=w*h;i<n;i++){ let v=(T[i]-lo)*sc; v = v<0?0:v>255?255:(v|0); if(!(v>=0)) v=0;
+    d[i*4]=lut[v*3]; d[i*4+1]=lut[v*3+1]; d[i*4+2]=lut[v*3+2]; d[i*4+3]=255; }
+  ctx.putImageData(img,0,0);
+}
+const fmt = v => v===undefined||v===null||!Number.isFinite(v) ? "–" : (Math.abs(v)>=1e4||(Math.abs(v)<1e-2&&v!==0)) ? v.toExponential(3) : (+v.toPrecision(5)).toString();
+
+// ---------------------------------------------------------------- dataset install
+async function setData(arr, ny, nx, ky, kx, name){
+  const N=ny*nx, K=ky*kx;
+  if(arr.length < N*K) throw new Error(`Array has ${arr.length} elements; expected ${N}×${K} = ${N*K}.`);
+  if(arr instanceof BigInt64Array || arr instanceof BigUint64Array){ const f=new Float32Array(arr.length); for(let i=0;i<arr.length;i++) f[i]=Number(arr[i]); arr=f; }
+  Object.assign(S,{data:arr, ny, nx, ky, kx, N, K, name});
+  busy("Computing mean / max patterns…"); await tick();
+  const totals=new Float32Array(N), mean=new Float64Array(K), mx=new Float32Array(K).fill(-Infinity);
+  for(let p=0;p<N;p++){
+    const b=p*K; let t=0;
+    for(let k=0;k<K;k++){ const v=arr[b+k]; t+=v; mean[k]+=v; if(v>mx[k]) mx[k]=v; }
+    totals[p]=t;
+    if((p&1023)===1023){ busy(`Computing mean / max patterns… ${Math.round(100*p/N)}%`); await tick(); }
+  }
+  const meanF=new Float32Array(K); for(let k=0;k<K;k++) meanF[k]=mean[k]/N;
+  S.totals=totals; S.meanDP=meanF; S.maxDP=mx;
+  let gm=0; for(let k=0;k<K;k++) if(mx[k]>gm) gm=mx[k]; S.gmax=gm>0?gm:1;
+  S.vimg=new Float32Array(N); S.img=S.vimg; S.imgW=nx; S.imgH=ny; S.imgUp=1; S.calib=null; S.dpBuf=new Float32Array(K); S.dpT=new Float32Array(K); S.imT=new Float32Array(N);
+  autoDetector();
+  S.probe={x:nx>>1, y:ny>>1}; S.rsRect=null;
+  $("dpView").style.setProperty("--ar", kx/ky); $("imView").style.setProperty("--ar", nx/ny);
+  $("dpEmpty").style.display="none"; $("imEmpty").style.display="none"; $("saveBtn").disabled=false;
+  const dt = arr.constructor.name.replace("Array","");
+  $("info").textContent = `${name} — scan ${ny}×${nx} (rows×cols), pattern ${ky}×${kx}, ${dt}, ${(arr.byteLength/1048576).toFixed(0)} MB`;
+  busy();
+  buildGeoInputs(); syncInputs(); resizeOverlays();
+  update(true,true);
+}
+
+function autoDetector(){
+  // locate the bright-field disk in the mean pattern: centroid of pixels above 50% of max
+  const {meanDP:m, ky, kx}=S; let mx=-Infinity; for(const v of m) if(v>mx) mx=v;
+  let mn=Infinity; for(const v of m) if(v<mn) mn=v;
+  const thr=mn+0.5*(mx-mn); let sx=0,sy=0,sw=0,cnt=0;
+  for(let y=0;y<ky;y++) for(let x=0;x<kx;x++){ const v=m[y*kx+x]; if(v>=thr){ const w=v-thr; sx+=w*x; sy+=w*y; sw+=w; cnt++; } }
+  const cx = sw>0? sx/sw : (kx-1)/2, cy = sw>0? sy/sw : (ky-1)/2;
+  let r = Math.max(1, Math.sqrt(cnt/Math.PI));
+  if(cnt > 0.5*ky*kx) r = Math.min(kx,ky)/8;
+  const edge=Math.min(cx,cy,kx-1-cx,ky-1-cy);
+  const d=S.det; d.cx=+cx.toFixed(1); d.cy=+cy.toFixed(1); d.r=+r.toFixed(1);
+  d.ri=+Math.min(1.3*r+1, edge*0.6).toFixed(1); d.ro=+Math.max(d.ri+1, Math.min(3.5*r, edge)).toFixed(1);
+  S.bf={cx,cy,r};
+  d.x0=+(cx-r).toFixed(1); d.x1=+(cx+r).toFixed(1); d.y0=+(cy-r).toFixed(1); d.y1=+(cy+r).toFixed(1);
+}
+
+// ---------------------------------------------------------------- detector mask + virtual image
+function buildMask(){
+  const {ky,kx}=S, d=S.det, idx=[];
+  if(d.shape==="point"){
+    const x=Math.min(kx-1,Math.max(0,Math.round(d.cx))), y=Math.min(ky-1,Math.max(0,Math.round(d.cy)));
+    idx.push(y*kx+x);
+  } else if(d.shape==="circle"||d.shape==="annulus"){
+    const ro = d.shape==="circle"? d.r : d.ro, ri = d.shape==="circle"? -1 : d.ri;
+    const ro2=ro*ro, ri2=ri<0?-1:ri*ri;
+    const y0=Math.max(0,Math.floor(d.cy-ro)), y1=Math.min(ky-1,Math.ceil(d.cy+ro)), x0=Math.max(0,Math.floor(d.cx-ro)), x1=Math.min(kx-1,Math.ceil(d.cx+ro));
+    for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const r2=(x-d.cx)**2+(y-d.cy)**2; if(r2<=ro2 && r2>=ri2) idx.push(y*kx+x); }
+    if(!idx.length && d.shape==="circle"){ const x=Math.round(d.cx), y=Math.round(d.cy); if(x>=0&&y>=0&&x<kx&&y<ky) idx.push(y*kx+x); }
+  } else {
+    const xa=Math.max(0,Math.ceil(Math.min(d.x0,d.x1)-1e-9)), xb=Math.min(kx-1,Math.floor(Math.max(d.x0,d.x1)+1e-9));
+    const ya=Math.max(0,Math.ceil(Math.min(d.y0,d.y1)-1e-9)), yb=Math.min(ky-1,Math.floor(Math.max(d.y0,d.y1)+1e-9));
+    for(let y=ya;y<=yb;y++) for(let x=xa;x<=xb;x++) idx.push(y*kx+x);
+  }
+  return Int32Array.from(idx);
+}
+function detCenter(){ const d=S.det; return d.shape==="rect" ? [(d.x0+d.x1)/2,(d.y0+d.y1)/2] : [d.cx,d.cy]; }
+
+function computeVirtual(){
+  if($("signal").value==="tcbf"){ computeTCBF(); return; }
+  if($("signal").value==="acbf"){ useACBF(); return; }
+  if($("signal").value==="idpc"){ computeIDPC(); return; }
+  S.img=S.vimg; S.imgW=S.nx; S.imgH=S.ny; S.imgUp=1;
+  const {data,N,K,totals,kx}=S, out=S.vimg, idx=buildMask(), n=idx.length, sig=$("signal").value;
+  S.maskCount=n;
+  if(!n){ out.fill(0); return; }
+  if(sig==="sum"){
+    if(n > K/2){ // complement trick: total − (outside)
+      const inM=new Uint8Array(K); for(let i=0;i<n;i++) inM[idx[i]]=1;
+      const comp=[]; for(let k=0;k<K;k++) if(!inM[k]) comp.push(k); const c=Int32Array.from(comp), m=c.length;
+      for(let p=0;p<N;p++){ const b=p*K; let s=totals[p]; for(let i=0;i<m;i++) s-=data[b+c[i]]; out[p]=s; }
+    } else {
+      for(let p=0;p<N;p++){ const b=p*K; let s=0; for(let i=0;i<n;i++) s+=data[b+idx[i]]; out[p]=s; }
+    }
+  } else {
+    const [cx,cy]=detCenter(), wx=new Float32Array(n), wy=new Float32Array(n);
+    for(let i=0;i<n;i++){ wx[i]=(idx[i]%kx)-cx; wy[i]=Math.floor(idx[i]/kx)-cy; }
+    for(let p=0;p<N;p++){ const b=p*K; let s=0,sx=0,sy=0;
+      for(let i=0;i<n;i++){ const v=data[b+idx[i]]; s+=v; sx+=v*wx[i]; sy+=v*wy[i]; }
+      const X = s!==0? sx/s : 0, Y = s!==0? sy/s : 0;
+      out[p] = sig==="comx"? X : sig==="comy"? Y : Math.hypot(X,Y);
+    }
+  }
+}
+
+function computeDP(){
+  const {data,K,nx,ny}=S, show=$("dpShow").value, out=S.dpBuf;
+  if(show==="mean"){ out.set(S.meanDP); return; }
+  if(show==="max"){ out.set(S.maxDP); return; }
+  if(S.rsMode==="rect" && S.rsRect){
+    const r=S.rsRect, xa=Math.max(0,Math.min(r.x0,r.x1)), xb=Math.min(nx-1,Math.max(r.x0,r.x1)), ya=Math.max(0,Math.min(r.y0,r.y1)), yb=Math.min(ny-1,Math.max(r.y0,r.y1));
+    out.fill(0); let c=0;
+    for(let y=ya;y<=yb;y++) for(let x=xa;x<=xb;x++){ const b=(y*nx+x)*K; for(let k=0;k<K;k++) out[k]+=data[b+k]; c++; }
+    if(c) for(let k=0;k<K;k++) out[k]/=c;
+    S.rsCount=c; return;
+  }
+  const p=S.probe.y*nx+S.probe.x, b=p*K;
+  for(let k=0;k<K;k++) out[k]=data[b+k];
+}
+
+// ---------------------------------------------------------------- drawing
+function drawDP(){
+  const {dpBuf:a, dpT:T, K, kx, ky}=S, sc=$("dpScale").value, s=S.gmax*2e-5;
+  if(sc==="log") for(let k=0;k<K;k++){ const v=a[k]; T[k]=Math.log1p((v>0?v:0)/s); }
+  else if(sc==="sqrt") for(let k=0;k<K;k++){ const v=a[k]; T[k]=Math.sqrt(v>0?v:0); }
+  else T.set(a);
+  const [lo,hi]=percentiles(T,+$("dpLo").value,+$("dpHi").value);
+  $("dpCl").textContent=`${(+$("dpLo").value).toFixed(1)}–${(+$("dpHi").value).toFixed(2)}%`;
+  render($("dpCan"),T,kx,ky,lo,hi,LUT[$("dpCmap").value]);
+}
+function drawIm(){
+  const {img:vimg, imgW:nx, imgH:ny}=S;
+  const [lo0,hi0]=percentiles(vimg,+$("imLo").value,+$("imHi").value); let lo=lo0, hi=hi0;
+  const sig=$("signal").value;
+  if((sig==="comx"||sig==="comy") && $("imCmap").value.startsWith("RdBu")){ const m=Math.max(Math.abs(lo),Math.abs(hi)); lo=-m; hi=m; }
+  $("imCl").textContent=`${(+$("imLo").value).toFixed(1)}–${(+$("imHi").value).toFixed(2)}%`;
+  render($("imCan"),vimg,nx,ny,lo,hi,LUT[$("imCmap").value]);
+  if($("psOn").checked) drawPS();
+}
+// power spectrum of the displayed virtual image: mean-filled NaNs, 2D Hann window, zero-padded to a power of 2
+function drawPS(){
+  const {img:a, imgW:w, imgH:h}=S; let Pn=1; while(Pn<Math.max(w,h)) Pn<<=1; Pn=Math.max(Pn,64);
+  const re=new Float64Array(Pn*Pn), im=new Float64Array(Pn*Pn); let m=0,c=0; for(const v of a) if(Number.isFinite(v)){m+=v;c++;} m=c?m/c:0;
+  for(let y=0;y<h;y++){ const wy=0.5-0.5*Math.cos(2*Math.PI*(y+0.5)/h); for(let x=0;x<w;x++){ const v=a[y*w+x]; re[y*Pn+x]=((Number.isFinite(v)?v:m)-m)*wy*(0.5-0.5*Math.cos(2*Math.PI*(x+0.5)/w)); } }
+  makeFFT(Pn)(re,im,false);
+  const ps=new Float32Array(Pn*Pn), H=Pn/2;
+  for(let y=0;y<Pn;y++) for(let x=0;x<Pn;x++){ const q=((y+H)%Pn)*Pn+((x+H)%Pn); ps[y*Pn+x]=Math.log10(re[q]*re[q]+im[q]*im[q]+1e-30); }
+  ps[H*Pn+H]=ps[H*Pn+H+1]; // hide the DC term
+  const [lo,hi]=percentiles(ps,40,99.95); S.ps={arr:ps, n:Pn, w, h};
+  render($("psCan"),ps,Pn,Pn,lo,hi,LUT["inferno"]);
+}
+$("psOn").addEventListener("change",()=>{ $("psCan").hidden=!$("psOn").checked; if(S.data) drawIm(); });
+{ const corners=["","bl","br","tl"]; let ci=0;
+  $("psCan").addEventListener("pointerdown",e=>{ e.stopPropagation(); ci=(ci+1)%4; $("psCan").className="ps"+(corners[ci]?" "+corners[ci]:""); });
+  $("psCan").addEventListener("pointermove",e=>{ e.stopPropagation(); if(!S.ps) return;
+    const r=$("psCan").getBoundingClientRect(), n=S.ps.n, fx=((e.clientX-r.left)/r.width*n-n/2)/n, fy=((e.clientY-r.top)/r.height*n-n/2)/n; // cycles per displayed pixel
+    const u=S.imgUp||1, f=Math.hypot(fx,fy)*u, st=+$("tcSt").value||1; // cycles per scan pixel
+    $("imRead").textContent = f>0 ? `FFT: |g| = ${(f/st).toFixed(3)} Å⁻¹ · d = ${(1/f).toFixed(2)} px = ${(st/f).toFixed(2)} Å` + (st===1&&!S.calib?" (set step in Optics for Å)":"") : "FFT: DC"; });
+  $("psCan").addEventListener("pointerleave",()=>{ $("imRead").textContent=""; });
+}
+function ovCtx(id){ const c=$(id), ctx=c.getContext("2d"); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,c.width,c.height); return ctx; }
+function drawDPOverlay(){
+  if(!S.data) return;
+  const c=$("dpOv"), ctx=ovCtx("dpOv"); dpOverlayOn(ctx, c.width/S.kx, window.devicePixelRatio||1);
+}
+function dpOverlayOn(ctx, s, dpr){
+  const d=S.det;
+  const X=x=>(x+0.5)*s, Y=y=>(y+0.5)*s;
+  ctx.lineWidth=1.5*dpr; ctx.strokeStyle="#4fb3ff"; ctx.fillStyle="rgba(79,179,255,0.18)";
+  if(d.shape==="point"){
+    const x=X(Math.round(d.cx)), y=Y(Math.round(d.cy)), r=Math.max(4*dpr, s*0.7);
+    ctx.beginPath(); ctx.arc(x,y,r,0,2*Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-2*r,y); ctx.lineTo(x-r,y); ctx.moveTo(x+r,y); ctx.lineTo(x+2*r,y); ctx.moveTo(x,y-2*r); ctx.lineTo(x,y-r); ctx.moveTo(x,y+r); ctx.lineTo(x,y+2*r); ctx.stroke();
+  } else if(d.shape==="circle"){
+    ctx.beginPath(); ctx.arc(X(d.cx),Y(d.cy),d.r*s,0,2*Math.PI); ctx.fill(); ctx.stroke(); dot(ctx,X(d.cx),Y(d.cy),dpr);
+  } else if(d.shape==="annulus"){
+    ctx.beginPath(); ctx.arc(X(d.cx),Y(d.cy),d.ro*s,0,2*Math.PI); ctx.arc(X(d.cx),Y(d.cy),d.ri*s,0,2*Math.PI,true); ctx.fill("evenodd");
+    ctx.beginPath(); ctx.arc(X(d.cx),Y(d.cy),d.ro*s,0,2*Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.arc(X(d.cx),Y(d.cy),d.ri*s,0,2*Math.PI); ctx.stroke(); dot(ctx,X(d.cx),Y(d.cy),dpr);
+  } else {
+    const xa=Math.min(d.x0,d.x1), xb=Math.max(d.x0,d.x1), ya=Math.min(d.y0,d.y1), yb=Math.max(d.y0,d.y1);
+    const x=xa*s, y=ya*s, w=(xb-xa+1)*s, h=(yb-ya+1)*s;
+    ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+    for(const [px,py] of [[x,y],[x+w,y],[x,y+h],[x+w,y+h]]){ ctx.fillStyle="#4fb3ff"; ctx.fillRect(px-3*dpr,py-3*dpr,6*dpr,6*dpr); }
+  }
+}
+function dot(ctx,x,y,dpr){ ctx.save(); ctx.fillStyle="#4fb3ff"; ctx.beginPath(); ctx.arc(x,y,2.5*dpr,0,2*Math.PI); ctx.fill(); ctx.restore(); }
+function drawImOverlay(){
+  if(!S.data) return;
+  const c=$("imOv"), ctx=ovCtx("imOv"); imOverlayOn(ctx, c.width/S.nx, window.devicePixelRatio||1);
+}
+function imOverlayOn(ctx, s, dpr){
+  ctx.lineWidth=1.5*dpr; ctx.strokeStyle="#ffb347";
+  if(S.rsMode==="rect" && S.rsRect){
+    const r=S.rsRect, xa=Math.min(r.x0,r.x1), xb=Math.max(r.x0,r.x1), ya=Math.min(r.y0,r.y1), yb=Math.max(r.y0,r.y1);
+    ctx.fillStyle="rgba(255,179,71,0.18)"; ctx.fillRect(xa*s,ya*s,(xb-xa+1)*s,(yb-ya+1)*s); ctx.strokeRect(xa*s,ya*s,(xb-xa+1)*s,(yb-ya+1)*s);
+  } else {
+    const x=(S.probe.x+0.5)*s, y=(S.probe.y+0.5)*s, r=Math.max(5*dpr, s*0.6);
+    ctx.beginPath(); ctx.arc(x,y,r,0,2*Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-2.2*r,y); ctx.lineTo(x-r,y); ctx.moveTo(x+r,y); ctx.lineTo(x+2.2*r,y); ctx.moveTo(x,y-2.2*r); ctx.lineTo(x,y-r); ctx.moveTo(x,y+r); ctx.lineTo(x,y+2.2*r); ctx.stroke();
+  }
+}
+function resizeOverlays(){
+  const dpr=window.devicePixelRatio||1;
+  for(const id of ["dpOv","imOv"]){ const c=$(id), r=c.getBoundingClientRect(); const w=Math.max(1,Math.round(r.width*dpr)), h=Math.max(1,Math.round(r.height*dpr)); if(c.width!==w||c.height!==h){c.width=w;c.height=h;} }
+  drawDPOverlay(); drawImOverlay();
+}
+new ResizeObserver(resizeOverlays).observe($("dpView")); new ResizeObserver(resizeOverlays).observe($("imView"));
+
+// ---------------------------------------------------------------- update loop (rAF-coalesced)
+let pend={v:false,d:false}, raf=0;
+function update(v,d){ pend.v=pend.v||v; pend.d=pend.d||d; if(!raf) raf=requestAnimationFrame(doUpdate); }
+function doUpdate(){
+  raf=0; if(!S.data){pend={v:false,d:false};return;}
+  const t0=performance.now(); let tv=0;
+  if(pend.v){ computeVirtual(); tv=performance.now()-t0; drawIm(); }
+  if(pend.d){ computeDP(); drawDP(); }
+  pend={v:false,d:false};
+  drawDPOverlay(); drawImOverlay(); syncInputs();
+  const pos = S.rsMode==="rect"&&S.rsRect ? `avg of ${S.rsCount||0} positions` : `probe (${S.probe.x}, ${S.probe.y})`;
+  $("status").textContent = `Detector: ${S.maskCount??0} pixels · ${pos}` + (tv? ` · virtual image computed in ${tv.toFixed(0)} ms` : "");
+}
+
+// ---------------------------------------------------------------- geometry inputs
+function buildGeoInputs(){
+  const sh=S.det.shape, g=$("geo"), F=(k,l)=>`<span>${l}</span><input type="number" step="0.5" data-k="${k}">`;
+  g.innerHTML = sh==="point" ? F("cx","x")+F("cy","y")
+    : sh==="circle" ? F("cx","x")+F("cy","y")+F("r","r")
+    : sh==="annulus" ? F("cx","x")+F("cy","y")+F("ri","r in")+F("ro","r out")
+    : F("x0","x0")+F("y0","y0")+F("x1","x1")+F("y1","y1");
+  g.querySelectorAll("input").forEach(inp=>inp.addEventListener("input",()=>{ const v=parseFloat(inp.value); if(Number.isFinite(v)){ S.det[inp.dataset.k]=v; if(S.det.ri>S.det.ro) S.det.ri=S.det.ro; update(true,false);} }));
+}
+function syncInputs(){
+  $("geo").querySelectorAll("input").forEach(inp=>{ if(document.activeElement!==inp) inp.value=+(+S.det[inp.dataset.k]).toFixed(2); });
+  if(document.activeElement!==$("px")) $("px").value=S.probe.x;
+  if(document.activeElement!==$("py")) $("py").value=S.probe.y;
+}
+function segment(id, cb){ $(id).addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; $(id).querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b)); cb(b.dataset.v); }); }
+segment("detSeg", v=>{ const d=S.det, [cx,cy]=detCenter();
+  if(v==="rect" && d.shape!=="rect"){ const r=d.shape==="annulus"?d.ro:d.shape==="circle"?d.r:3; d.x0=cx-r; d.x1=cx+r; d.y0=cy-r; d.y1=cy+r; }
+  if(v!=="rect" && d.shape==="rect"){ d.cx=cx; d.cy=cy; }
+  d.shape=v; buildGeoInputs(); update(true,false); });
+segment("dpInterp", v=>$("dpCan").classList.toggle("smooth", v==="smooth"));
+segment("imInterp", v=>$("imCan").classList.toggle("smooth", v==="smooth"));
+segment("rsSeg", v=>{ S.rsMode=v; if(v==="rect"&&!S.rsRect&&S.data){ const {x,y}=S.probe, h=Math.max(1,Math.round(Math.min(S.nx,S.ny)/16)); S.rsRect={x0:x-h,y0:y-h,x1:x+h,y1:y+h}; } update(false,true); });
+for(const id of ["signal"]) $(id).addEventListener("change",()=>{ const sig=$(id).value;
+  document.querySelectorAll(".tcrow").forEach(e=>e.hidden = !(sig==="tcbf"||sig==="acbf"||sig==="idpc"));
+  document.querySelectorAll(".tconly").forEach(e=>e.hidden = sig==="idpc");
+  document.querySelectorAll(".idrow").forEach(e=>e.hidden = sig!=="idpc");
+  if(sig==="idpc" && S.data && S.bf){ const d=S.det; d.shape="circle"; d.cx=+S.bf.cx.toFixed(1); d.cy=+S.bf.cy.toFixed(1); d.r=+(Math.min(S.kx,S.ky)/2).toFixed(1);
+    $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="circle")); buildGeoInputs(); }
+  document.querySelectorAll(".acrow").forEach(e=>e.hidden = sig!=="acbf");
+  if((sig==="tcbf"||sig==="acbf") && S.data){ const d=S.det; if(d.shape!=="circle"){ d.shape="circle"; $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="circle")); }
+    if(S.bf){ d.cx=+S.bf.cx.toFixed(1); d.cy=+S.bf.cy.toFixed(1); d.r=+(0.92*S.bf.r).toFixed(1); } buildGeoInputs(); } if(sig==="comx"||sig==="comy") $("imCmap").value="RdBu (diverging)"; else if($("imCmap").value.startsWith("RdBu")) $("imCmap").value="gray"; update(true,false); });
+for(const id of ["dpShow","dpScale","dpCmap","dpLo","dpHi"]) $(id).addEventListener("input",()=>update(false,true));
+for(const id of ["imCmap","imLo","imHi"]) $(id).addEventListener("input",()=>{ if(S.data){drawIm();} });
+for(const id of ["px","py"]) $(id).addEventListener("input",()=>{ const x=parseInt($("px").value), y=parseInt($("py").value); if(Number.isFinite(x)&&Number.isFinite(y)) setProbe(x,y); });
+function setProbe(x,y){ if(!S.data) return; x=Math.max(0,Math.min(S.nx-1,x)); y=Math.max(0,Math.min(S.ny-1,y)); if(x===S.probe.x&&y===S.probe.y&&S.rsMode==="point") return; S.probe={x,y}; if($("dpShow").value!=="probe") $("dpShow").value="probe"; update(false,true); }
+
+// ---------------------------------------------------------------- pointer interaction
+function toData(e, viewId, nx){ const r=$(viewId).getBoundingClientRect(), s=r.width/nx; return {x:(e.clientX-r.left)/s-0.5, y:(e.clientY-r.top)/s-0.5, s}; }
+function hitTest(p){
+  const d=S.det, tol=9/p.s;
+  if(d.shape==="point"){ return Math.hypot(p.x-d.cx,p.y-d.cy)<Math.max(tol*1.5,1.5)?"move":null; }
+  if(d.shape==="circle"){ const r=Math.hypot(p.x-d.cx,p.y-d.cy); if(Math.abs(r-d.r)<tol) return "r"; return r<d.r?"move":null; }
+  if(d.shape==="annulus"){ const r=Math.hypot(p.x-d.cx,p.y-d.cy); if(Math.abs(r-d.ro)<tol) return "ro"; if(Math.abs(r-d.ri)<tol) return "ri"; return r<d.ro?"move":null; }
+  // rectangle: edges in pixel-edge coordinates
+  const L=Math.min(d.x0,d.x1)-0.5, R=Math.max(d.x0,d.x1)+0.5, T=Math.min(d.y0,d.y1)-0.5, B=Math.max(d.y0,d.y1)+0.5;
+  const nl=Math.abs(p.x-L)<tol, nr=Math.abs(p.x-R)<tol, nt=Math.abs(p.y-T)<tol, nb=Math.abs(p.y-B)<tol;
+  const inY=p.y>T-tol&&p.y<B+tol, inX=p.x>L-tol&&p.x<R+tol;
+  let h=""; if(nt&&inX) h+="t"; if(nb&&inX) h+="b"; if(nl&&inY) h+="l"; if(nr&&inY) h+="r";
+  if(h) return "e"+h;
+  return (p.x>L&&p.x<R&&p.y>T&&p.y<B)?"move":null;
+}
+const CURS={move:"move",r:"ew-resize",ro:"ew-resize",ri:"ew-resize",et:"ns-resize",eb:"ns-resize",el:"ew-resize",er:"ew-resize",etl:"nwse-resize",ebr:"nwse-resize",etr:"nesw-resize",ebl:"nesw-resize"};
+let dpDrag=null;
+$("dpView").addEventListener("pointerdown",e=>{
+  if(!S.data) return; const p=toData(e,"dpView",S.kx); let h=hitTest(p); const d=S.det;
+  if(!h){ if(d.shape==="rect"){ d.x0=d.x1=Math.round(p.x); d.y0=d.y1=Math.round(p.y); h="draw"; } else { d.cx=+p.x.toFixed(1); d.cy=+p.y.toFixed(1); h="move"; update(true,false); } }
+  dpDrag={h, p0:p, d0:{...d}}; $("dpView").setPointerCapture(e.pointerId); e.preventDefault();
+});
+$("dpView").addEventListener("pointermove",e=>{
+  if(!S.data) return; const p=toData(e,"dpView",S.kx);
+  const xi=Math.round(p.x), yi=Math.round(p.y);
+  if(xi>=0&&yi>=0&&xi<S.kx&&yi<S.ky) $("dpRead").textContent=`(x ${xi}, y ${yi}) = ${fmt(S.dpBuf[yi*S.kx+xi])}  ·  r = ${Math.hypot(p.x-detCenter()[0],p.y-detCenter()[1]).toFixed(1)} px`;
+  if(!dpDrag){ $("dpView").style.cursor=CURS[hitTest(p)]||"crosshair"; return; }
+  const d=S.det, d0=dpDrag.d0, dx=p.x-dpDrag.p0.x, dy=p.y-dpDrag.p0.y, R=v=>+v.toFixed(1), h=dpDrag.h;
+  if(h==="move"){ if(d.shape==="rect"){ const ix=Math.round(dx), iy=Math.round(dy); d.x0=d0.x0+ix; d.x1=d0.x1+ix; d.y0=d0.y0+iy; d.y1=d0.y1+iy; } else { d.cx=R(d0.cx+dx); d.cy=R(d0.cy+dy); } }
+  else if(h==="r") d.r=R(Math.max(0.5,Math.hypot(p.x-d.cx,p.y-d.cy)));
+  else if(h==="ro") d.ro=R(Math.max(d.ri+0.5,Math.hypot(p.x-d.cx,p.y-d.cy)));
+  else if(h==="ri") d.ri=R(Math.max(0,Math.min(d.ro-0.5,Math.hypot(p.x-d.cx,p.y-d.cy))));
+  else if(h==="draw"){ d.x1=Math.round(p.x); d.y1=Math.round(p.y); }
+  else if(h[0]==="e"){ const xi2=Math.round(p.x), yi2=Math.round(p.y);
+    const L=Math.min(d0.x0,d0.x1), Rr=Math.max(d0.x0,d0.x1), T=Math.min(d0.y0,d0.y1), B=Math.max(d0.y0,d0.y1);
+    let nl=L,nr=Rr,nt=T,nb=B; if(h.includes("l")) nl=xi2; if(h.includes("r")) nr=xi2; if(h.includes("t")) nt=yi2; if(h.includes("b")) nb=yi2;
+    d.x0=nl; d.x1=nr; d.y0=nt; d.y1=nb; }
+  update(true,false);
+});
+const endDp=()=>{ if(dpDrag && S.det.shape==="rect"){ const d=S.det; [d.x0,d.x1]=[Math.min(d.x0,d.x1),Math.max(d.x0,d.x1)]; [d.y0,d.y1]=[Math.min(d.y0,d.y1),Math.max(d.y0,d.y1)]; } dpDrag=null; };
+$("dpView").addEventListener("pointerup",endDp); $("dpView").addEventListener("pointercancel",endDp);
+$("dpView").addEventListener("pointerleave",()=>{ if(!dpDrag) $("dpRead").textContent=""; });
+
+let imDrag=null;
+$("imView").addEventListener("pointerdown",e=>{
+  if(!S.data) return; const p=toData(e,"imView",S.nx), x=Math.round(p.x), y=Math.round(p.y);
+  imDrag=true; $("imView").setPointerCapture(e.pointerId); e.preventDefault();
+  if(S.rsMode==="rect"){ S.rsRect={x0:x,y0:y,x1:x,y1:y}; S.probe={x:Math.max(0,Math.min(S.nx-1,x)),y:Math.max(0,Math.min(S.ny-1,y))}; if($("dpShow").value!=="probe") $("dpShow").value="probe"; update(false,true); }
+  else setProbe(x,y);
+});
+$("imView").addEventListener("pointermove",e=>{
+  if(!S.data) return; const p=toData(e,"imView",S.nx), x=Math.round(p.x), y=Math.round(p.y);
+  if(x>=0&&y>=0&&x<S.nx&&y<S.ny) { const u=S.imgUp, fx=Math.min(S.imgW-1,Math.max(0,Math.floor((p.x+0.5)*u))), fy=Math.min(S.imgH-1,Math.max(0,Math.floor((p.y+0.5)*u))); $("imRead").textContent=`(x ${x}, y ${y}) = ${fmt(S.img[fy*S.imgW+fx])}`; }
+  if(!imDrag) return;
+  if(S.rsMode==="rect"){ S.rsRect.x1=x; S.rsRect.y1=y; update(false,true); } else setProbe(x,y);
+});
+const endIm=()=>{ imDrag=null; }; $("imView").addEventListener("pointerup",endIm); $("imView").addEventListener("pointercancel",endIm);
+$("imView").addEventListener("pointerleave",()=>{ if(!imDrag) $("imRead").textContent=""; });
+window.addEventListener("keydown",e=>{
+  if(!S.data || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName||"")) return;
+  const st=e.shiftKey?5:1, m={ArrowLeft:[-st,0],ArrowRight:[st,0],ArrowUp:[0,-st],ArrowDown:[0,st]}[e.key];
+  if(!m) return; e.preventDefault();
+  if(S.rsMode==="rect"){ $("rsSeg").querySelector('[data-v="point"]').click(); }
+  setProbe(S.probe.x+m[0], S.probe.y+m[1]);
+});
+
+// ---------------------------------------------------------------- export snippet
+$("snip").addEventListener("click",async()=>{
+  if(!S.data) return; const d=S.det, sig=$("signal").value; let mask;
+  if(d.shape==="point") mask=`mask = np.zeros((${S.ky}, ${S.kx}), bool)\nmask[${Math.round(d.cy)}, ${Math.round(d.cx)}] = True`;
+  else if(d.shape==="circle") mask=`r2 = (qx - ${d.cx})**2 + (qy - ${d.cy})**2\nmask = r2 <= ${d.r}**2`;
+  else if(d.shape==="annulus") mask=`r2 = (qx - ${d.cx})**2 + (qy - ${d.cy})**2\nmask = (r2 >= ${d.ri}**2) & (r2 <= ${d.ro}**2)`;
+  else mask=`mask = (qx >= ${Math.min(d.x0,d.x1)}) & (qx <= ${Math.max(d.x0,d.x1)}) & (qy >= ${Math.min(d.y0,d.y1)}) & (qy <= ${Math.max(d.y0,d.y1)})`;
+  const [cx,cy]=detCenter();
+  let body = sig==="sum" ? `vimg = np.tensordot(data, mask.astype(np.float32), axes=([2, 3], [0, 1]))`
+   : `w = mask.astype(np.float32)\nI  = np.tensordot(data, w, axes=([2, 3], [0, 1]))\ncom_x = np.tensordot(data, w * (qx - ${cx.toFixed(2)}), axes=([2, 3], [0, 1])) / I\ncom_y = np.tensordot(data, w * (qy - ${cy.toFixed(2)}), axes=([2, 3], [0, 1])) / I`;
+  const code=`import numpy as np\n# data: shape (scan_rows, scan_cols, k_rows, k_cols) = (${S.ny}, ${S.nx}, ${S.ky}, ${S.kx})\n# x = column index, y = row index (pixel centres at integers)\nqy, qx = np.mgrid[:${S.ky}, :${S.kx}]\n${mask}\n${body}\n`;
+  try{ await navigator.clipboard.writeText(code); $("snip").textContent="Copied ✓"; setTimeout(()=>$("snip").textContent="Copy detector as NumPy code",1500); }
+  catch{ modal(`<h3>NumPy code</h3><textarea readonly>${code}</textarea><div class="actions"><button onclick="closeModal()">Close</button></div>`); }
+});
+
+// ---------------------------------------------------------------- file entry
+$("file").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) openFile(f); e.target.value=""; });
+let dragN=0;
+window.addEventListener("dragenter",e=>{ e.preventDefault(); dragN++; $("drop").style.display="flex"; });
+window.addEventListener("dragleave",e=>{ dragN--; if(dragN<=0){ dragN=0; $("drop").style.display="none"; } });
+window.addEventListener("dragover",e=>e.preventDefault());
+window.addEventListener("drop",e=>{ e.preventDefault(); dragN=0; $("drop").style.display="none"; const f=e.dataTransfer.files[0]; if(f) openFile(f); });
+
+async function openFile(f){
+  const ext=(f.name.split(".").pop()||"").toLowerCase();
+  try{
+    if(["h5","hdf5","emd","py4dstem","nxs","hdf"].includes(ext)) await loadHDF5(f);
+    else if(["tif","tiff"].includes(ext)) await loadTIFF(f);
+    else if(ext==="npy") await loadNPY(f);
+    else await rawDialog(f);
+  }catch(e){ showError(e); }
+}
+
+// ask user for scan shape of an (N, ky, kx) stack
+function askScanShape(N, ky, kx, name, hint, onOK){
+  const [a,b]=hint||factorGuess(N);
+  modal(`<h3>Scan shape</h3><div class="hint">${name}: ${N} frames of ${ky}×${kx}. Enter the scan grid (rows × cols = ${N}).</div>
+   <div class="grid"><label>Scan rows (y)</label><input type="number" id="mRows" value="${a}" min="1"><label>Scan cols (x)</label><input type="number" id="mCols" value="${b}" min="1"></div>
+   <div class="hint err" id="mErr"></div>
+   <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="mOK">Load</button></div>`);
+  $("mRows").addEventListener("input",()=>{ const r=+$("mRows").value; if(r>0 && N%r===0) $("mCols").value=N/r; });
+  $("mOK").onclick=async()=>{ const r=+$("mRows").value, c=+$("mCols").value; if(r*c>N||r<1||c<1){ $("mErr").textContent=`rows × cols must be ≤ ${N}`; return; } closeModal(); try{ await onOK(r,c); }catch(e){ showError(e); } };
+}
+
+// ---------------------------------------------------------------- HDF5 (h5wasm)
+let H5=null;
+async function getH5(){
+  if(H5) return H5; let last;
+  for(const u of ["https://cdn.jsdelivr.net/npm/h5wasm@0.7/dist/esm/hdf5_hl.js","https://cdn.jsdelivr.net/npm/h5wasm@0.8/dist/esm/hdf5_hl.js","https://unpkg.com/h5wasm@0.7/dist/esm/hdf5_hl.js","https://cdn.jsdelivr.net/npm/h5wasm/dist/esm/hdf5_hl.js"]){
+    try{ const m=await import(u); const h5=m.default||m.h5wasm||m; const Mod=await h5.ready; const FS=(Mod&&Mod.FS)||h5.FS||m.FS; if(!FS) throw new Error("h5wasm FS not found"); H5={h5,FS}; return H5; }catch(e){ last=e; }
+  }
+  throw new Error("Could not load the HDF5 reader (h5wasm) from the CDN: "+(last&&last.message));
+}
+async function loadHDF5(f){
+  busy("Loading HDF5 reader…"); const {h5,FS}=await getH5();
+  busy(`Reading ${f.name} (${(f.size/1048576).toFixed(0)} MB)…`); await tick();
+  const fname="/in_"+Date.now()+".h5";
+  FS.writeFile(fname, new Uint8Array(await f.arrayBuffer()));
+  const file=new h5.File(fname,"r"); const found=[];
+  const walk=(g,path,depth)=>{ if(depth>12) return; let keys=[]; try{keys=g.keys();}catch{return;}
+    for(const k of keys){ let o; try{o=g.get(k);}catch{continue;} if(!o) continue; const p=path+"/"+k;
+      const t=o.type; if(t==="Group"||(h5.Group&&o instanceof h5.Group)) walk(o,p,depth+1);
+      else if(t==="Dataset"||(h5.Dataset&&o instanceof h5.Dataset)){ const sh=o.shape; if(sh&&sh.length>=3&&sh.length<=4) found.push({path:p,shape:sh,dtype:String(o.dtype)}); } } };
+  walk(file,"",0); busy();
+  const cleanup=()=>{ try{file.close();}catch{} try{FS.unlink(fname);}catch{} };
+  if(!found.length){ cleanup(); throw new Error("No 3D or 4D datasets found in this HDF5 file."); }
+  const size=s=>s.reduce((a,b)=>a*b,1);
+  found.sort((a,b)=>(b.shape.length-a.shape.length)||(size(b.shape)-size(a.shape)));
+  const read=async(entry, rows, cols)=>{
+    busy(`Reading ${entry.path}…`); await tick();
+    const ds=file.get(entry.path.slice(1)); let v=ds.value; cleanup();
+    if(Array.isArray(v)) v=Float32Array.from(v);
+    const sh=entry.shape;
+    if(sh.length===4) await setData(v,sh[0],sh[1],sh[2],sh[3],`${f.name}:${entry.path}`);
+    else await setData(v,rows,cols,sh[1],sh[2],`${f.name}:${entry.path}`);
+  };
+  const opts=found.map((d,i)=>`<option value="${i}">${d.path}  [${d.shape.join("×")}] ${d.dtype}</option>`).join("");
+  modal(`<h3>Choose a dataset</h3><div class="hint">4D datasets are read as (scan rows, scan cols, k rows, k cols), py4DSTEM's (Rx, Ry, Qx, Qy) order. 3D datasets are read as (frames, k rows, k cols) and need a scan shape.</div>
+    <div class="grid"><label>Dataset</label><select id="mDs">${opts}</select></div>
+    <div class="actions"><button id="mCancel">Cancel</button><button class="primary" id="mOK">Load</button></div>`);
+  $("mCancel").onclick=()=>{ cleanup(); closeModal(); };
+  $("mOK").onclick=async()=>{ const e=found[+$("mDs").value]; closeModal();
+    try{ if(e.shape.length===4) await read(e); else askScanShape(e.shape[0],e.shape[1],e.shape[2],e.path,null,(r,c)=>read(e,r,c)); }catch(err){ cleanup(); showError(err); } };
+}
+
+// ---------------------------------------------------------------- TIFF
+async function inflate(u8){ const ds=new DecompressionStream("deflate"); const out=await new Response(new Blob([u8]).stream().pipeThrough(ds)).arrayBuffer(); return new Uint8Array(out); }
+function lzwDecode(input, expected){
+  const out=new Uint8Array(expected); let op=0; let dict=[], bitPos=0, codeLen=9, prev=null;
+  const reset=()=>{ dict=[]; for(let i=0;i<256;i++) dict[i]=[i]; dict[256]=null; dict[257]=null; codeLen=9; };
+  reset(); const nbits=input.length*8;
+  const read=()=>{ if(bitPos+codeLen>nbits) return 257; let v=0; for(let i=0;i<codeLen;i++){ const b=bitPos+i; v=(v<<1)|((input[b>>3]>>(7-(b&7)))&1); } bitPos+=codeLen; return v; };
+  while(op<expected){
+    const code=read(); if(code===257) break;
+    if(code===256){ reset(); const c=read(); if(c===257) break; const e=dict[c]; for(const x of e) out[op++]=x; prev=e; continue; }
+    let entry; if(code<dict.length && dict[code]) entry=dict[code]; else if(code===dict.length) entry=prev.concat([prev[0]]); else break;
+    for(const x of entry){ if(op<expected) out[op++]=x; }
+    dict.push(prev.concat([entry[0]])); prev=entry;
+    if(dict.length+1>=(1<<codeLen) && codeLen<12) codeLen++;
+  }
+  return out;
+}
+async function loadTIFF(f){
+  busy(`Reading ${f.name}…`); await tick();
+  const buf=await f.arrayBuffer(), dv=new DataView(buf), u8=new Uint8Array(buf);
+  const le = dv.getUint16(0)===0x4949; if(!le && dv.getUint16(0)!==0x4D4D) throw new Error("Not a TIFF file.");
+  const magic=dv.getUint16(2,le), big=magic===43; if(magic!==42&&!big) throw new Error("Bad TIFF magic number.");
+  const u16=o=>dv.getUint16(o,le), u32=o=>dv.getUint32(o,le), u64=o=>Number(dv.getBigUint64(o,le));
+  const TS={1:1,2:1,3:2,4:4,5:8,6:1,7:1,8:2,9:4,10:8,11:4,12:8,16:8,17:8,18:8};
+  const rdv=(type,o)=>type===3?u16(o):type===4||type===13?u32(o):type===16||type===18?u64(o):type===1||type===7?u8[o]:type===8?dv.getInt16(o,le):type===9?dv.getInt32(o,le):type===11?dv.getFloat32(o,le):type===12?dv.getFloat64(o,le):u32(o);
+  let off = big? u64(8) : u32(4); const ifds=[];
+  while(off && off<buf.byteLength && ifds.length<1e7){
+    const n = big? u64(off) : u16(off), es=big?20:12, base=off+(big?8:2), tags={};
+    for(let i=0;i<n;i++){ const e=base+i*es, tag=u16(e), type=u16(e+2), cnt=big?u64(e+4):u32(e+4), sz=(TS[type]||1)*cnt, inl=big?8:4;
+      const vo = sz<=inl ? e+(big?12:8) : (big?u64(e+12):u32(e+8));
+      if(tag===270){ tags[tag]=new TextDecoder().decode(u8.subarray(vo,vo+cnt)); continue; }
+      if([256,257,258,259,273,277,278,279,284,317,339,322,323,324,325].includes(tag)){ const a=[]; for(let j=0;j<cnt;j++) a.push(rdv(type,vo+j*(TS[type]||1))); tags[tag]=a; } }
+    ifds.push(tags); off = big? u64(base+n*es) : u32(base+n*es);
+    if((ifds.length&4095)===0){ busy(`Indexing TIFF pages… ${ifds.length}`); await tick(); }
+  }
+  const t0=ifds[0], W=t0[256][0], H=t0[257][0], bps=(t0[258]||[1])[0], comp=(t0[259]||[1])[0], spp=(t0[277]||[1])[0], fmt=(t0[339]||[1])[0], pred=(t0[317]||[1])[0];
+  if(t0[322]) throw new Error("Tiled TIFFs are not supported; please save as a strip-based TIFF stack.");
+  if(spp!==1) throw new Error("Only single-channel (grayscale) TIFFs are supported.");
+  let nFrames=ifds.length, imagejContig=false;
+  const desc=t0[270]||""; const mImg=/images=(\d+)/.exec(desc);
+  if(ifds.length===1 && mImg && +mImg[1]>1 && comp===1){ nFrames=+mImg[1]; imagejContig=true; }
+  const T = fmt===3 ? (bps===32?Float32Array:bps===64?Float64Array:null)
+          : fmt===2 ? ({8:Int8Array,16:Int16Array,32:Int32Array})[bps] : ({8:Uint8Array,16:Uint16Array,32:Uint32Array})[bps];
+  if(!T) throw new Error(`Unsupported TIFF sample type (bits=${bps}, format=${fmt}).`);
+  const B=bps/8, fbytes=W*H*B;
+  const out=new T(nFrames*W*H), ob=new Uint8Array(out.buffer);
+  for(let i=0;i<nFrames;i++){
+    const t = imagejContig? t0 : ifds[i];
+    if(!imagejContig && (t[256][0]!==W||t[257][0]!==H)) throw new Error(`Page ${i} has a different size from page 0.`);
+    const dst=i*fbytes;
+    if(imagejContig){ ob.set(u8.subarray(t0[273][0]+i*fbytes, t0[273][0]+(i+1)*fbytes), dst); }
+    else { const so=t[273], sc=t[279]; let p=dst; const rps=(t[278]||[H])[0];
+      for(let s=0;s<so.length;s++){ let chunk=u8.subarray(so[s], so[s]+sc[s]);
+        const rows=Math.min(rps, H-s*rps), need=rows*W*B;
+        if(comp===8||comp===32946) chunk=await inflate(chunk);
+        else if(comp===5) chunk=lzwDecode(chunk, need);
+        else if(comp!==1) throw new Error(`Unsupported TIFF compression (${comp}). Use uncompressed, LZW, or deflate.`);
+        ob.set(chunk.subarray(0,Math.min(need,chunk.length)), p);
+        if(pred===2 && comp!==1){ // horizontal differencing, done on native-endian decoded bytes
+          if(!le && B>1) swapBytes(ob,p,need,B);
+          const v=new T(out.buffer, p, rows*W); for(let r=0;r<rows;r++) for(let x=1;x<W;x++) v[r*W+x]+=v[r*W+x-1];
+          if(!le && B>1) swapBytes(ob,p,need,B);
+        }
+        p+=need; } }
+    if((i&1023)===1023){ busy(`Decoding TIFF frames… ${Math.round(100*i/nFrames)}%`); await tick(); }
+  }
+  if(!le && B>1) swapBytes(ob,0,ob.length,B);
+  busy();
+  if(nFrames===1) throw new Error("This TIFF has a single 2D image. A 4D-STEM TIFF should be a stack with one diffraction pattern per page.");
+  askScanShape(nFrames,H,W,f.name,null,(r,c)=>setData(out,r,c,H,W,f.name));
+}
+function swapBytes(b,start,len,B){ for(let i=start;i<start+len;i+=B) for(let j=0;j<B/2;j++){ const t=b[i+j]; b[i+j]=b[i+B-1-j]; b[i+B-1-j]=t; } }
+
+// ---------------------------------------------------------------- NPY
+async function loadNPY(f){
+  busy(`Reading ${f.name}…`); await tick();
+  const buf=await f.arrayBuffer(), u8=new Uint8Array(buf), dv=new DataView(buf);
+  if(u8[0]!==0x93||String.fromCharCode(...u8.subarray(1,6))!=="NUMPY") throw new Error("Not a .npy file.");
+  const major=u8[6], hl= major===1? dv.getUint16(8,true) : dv.getUint32(8,true), ho= major===1?10:12;
+  const hdr=new TextDecoder().decode(u8.subarray(ho,ho+hl));
+  const descr=/'descr':\s*'([^']+)'/.exec(hdr)[1], fo=/'fortran_order':\s*(True|False)/.exec(hdr)[1]==="True";
+  const shape=/'shape':\s*\(([^)]*)\)/.exec(hdr)[1].split(",").map(s=>s.trim()).filter(Boolean).map(Number);
+  if(fo) throw new Error("Fortran-ordered .npy arrays are not supported (save with np.ascontiguousarray).");
+  const T={"f4":Float32Array,"f8":Float64Array,"u1":Uint8Array,"u2":Uint16Array,"u4":Uint32Array,"i1":Int8Array,"i2":Int16Array,"i4":Int32Array,"i8":BigInt64Array,"u8":BigUint64Array}[descr.slice(1)];
+  if(!T) throw new Error(`Unsupported dtype ${descr}`);
+  const start=ho+hl, n=shape.reduce((a,b)=>a*b,1), bytes=n*T.BYTES_PER_ELEMENT;
+  const copy=buf.slice(start,start+bytes);
+  if(descr[0]===">" && T.BYTES_PER_ELEMENT>1) swapBytes(new Uint8Array(copy),0,bytes,T.BYTES_PER_ELEMENT);
+  const arr=new T(copy); busy();
+  if(shape.length===4) await setData(arr,...shape,f.name);
+  else if(shape.length===3) askScanShape(shape[0],shape[1],shape[2],f.name,null,(r,c)=>setData(arr,r,c,shape[1],shape[2],f.name));
+  else throw new Error(`Expected a 3D or 4D array; got shape (${shape.join(", ")}).`);
+}
+
+// ---------------------------------------------------------------- RAW (EMPAD and generic)
+async function rawDialog(f){
+  const empadFrame=128*130*4, isEmpad = f.size%empadFrame===0;
+  const m=/_x(\d+)_y(\d+)/i.exec(f.name);
+  let rows,cols; if(m){ cols=+m[1]; rows=+m[2]; } else if(isEmpad){ [rows,cols]=factorGuess(f.size/empadFrame); } else { rows=cols=""; }
+  modal(`<h3>Raw binary</h3><div class="hint">${f.name} — ${f.size.toLocaleString()} bytes. ${isEmpad?"Size matches EMPAD frames (128×130 float32), so the EMPAD preset is filled in.":""}</div>
+    <div class="grid">
+      <label>Preset</label><select id="rPre"><option value="empad">EMPAD (128×130 float32, crop 2 rows)</option><option value="custom">Custom</option></select>
+      <label>Header bytes</label><input type="number" id="rHdr" value="0" min="0">
+      <label>Data type</label><select id="rDt"><option>float32</option><option>uint16</option><option>int16</option><option>uint8</option><option>uint32</option><option>int32</option><option>float64</option></select>
+      <label>Byte order</label><select id="rEnd"><option value="le">Little-endian</option><option value="be">Big-endian</option></select>
+      <label>Frame width (cols)</label><input type="number" id="rW" value="128">
+      <label>Frame height (rows, stored)</label><input type="number" id="rH" value="130">
+      <label>Rows to keep</label><input type="number" id="rKeep" value="128">
+      <label>Scan rows (y)</label><input type="number" id="rRows" value="${rows}">
+      <label>Scan cols (x)</label><input type="number" id="rCols" value="${cols}">
+    </div><div class="hint err" id="rErr"></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="rOK">Load</button></div>`);
+  if(!isEmpad){ $("rPre").value="custom"; }
+  $("rPre").onchange=()=>{ if($("rPre").value==="empad"){ $("rDt").value="float32"; $("rEnd").value="le"; $("rW").value=128; $("rH").value=130; $("rKeep").value=128; $("rHdr").value=0; } };
+  const recompute=()=>{ const dt={float32:4,uint16:2,int16:2,uint8:1,uint32:4,int32:4,float64:8}[$("rDt").value]; const fb=(+$("rW").value)*(+$("rH").value)*dt; const n=Math.floor((f.size-(+$("rHdr").value))/fb);
+    $("rErr").textContent = n>0? `${n} frames fit in the file.` : "Frame size larger than file."; return n; };
+  ["rDt","rW","rH","rHdr","rPre"].forEach(id=>$(id).addEventListener("input",recompute)); recompute();
+  $("rOK").onclick=async()=>{
+    const dtName=$("rDt").value, T={float32:Float32Array,uint16:Uint16Array,int16:Int16Array,uint8:Uint8Array,uint32:Uint32Array,int32:Int32Array,float64:Float64Array}[dtName];
+    const W=+$("rW").value, Hs=+$("rH").value, Hk=Math.min(Hs,+$("rKeep").value), R=+$("rRows").value, C=+$("rCols").value, hdr=+$("rHdr").value, be=$("rEnd").value==="be";
+    const B=T.BYTES_PER_ELEMENT, fb=W*Hs*B, N=R*C;
+    if(!(R>0&&C>0)) { $("rErr").textContent="Enter the scan shape."; return; }
+    if(hdr+N*fb>f.size){ $("rErr").textContent=`Need ${N} frames × ${fb} bytes = ${(hdr+N*fb).toLocaleString()} bytes, but the file has ${f.size.toLocaleString()}.`; return; }
+    closeModal();
+    try{
+      busy(`Reading ${f.name}…`); await tick();
+      const buf=await f.slice(hdr,hdr+N*fb).arrayBuffer(); const src=new Uint8Array(buf);
+      if(be && B>1) swapBytes(src,0,src.length,B);
+      let arr;
+      if(Hk===Hs) arr=new T(buf);
+      else { arr=new T(N*W*Hk); const ob=new Uint8Array(arr.buffer), keep=W*Hk*B;
+        for(let i=0;i<N;i++){ ob.set(src.subarray(i*fb,i*fb+keep), i*keep); if((i&4095)===4095){ busy(`Unpacking frames… ${Math.round(100*i/N)}%`); await tick(); } } }
+      await setData(arr,R,C,Hk,W,f.name);
+    }catch(e){ showError(e); }
+  };
+}
+
+// ---------------------------------------------------------------- synthetic demo
+$("demoSel").addEventListener("change",async()=>{
+  const v=$("demoSel").value; $("demoSel").value="";
+  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
+});
+async function demoGrains(){
+  busy("Generating demo dataset…"); await tick();
+  const ny=64, nx=64, ky=72, kx=72, K=ky*kx, data=new Float32Array(ny*nx*K);
+  const c0=35.5, R=3.5;
+  const spots=th=>{ const a=th*Math.PI/180, g=14, out=[]; const g1=[g*Math.cos(a),g*Math.sin(a)], g2=[g*Math.cos(a+Math.PI/3),g*Math.sin(a+Math.PI/3)];
+    for(let i=-4;i<=4;i++) for(let j=-4;j<=4;j++){ if(!i&&!j) continue; const x=i*g1[0]+j*g2[0], y=i*g1[1]+j*g2[1], q=Math.hypot(x,y); if(q<31) out.push([x,y,Math.exp(-q*q/(2*15*15))*(0.6+0.4*Math.cos(1.7*i+2.3*j)**2)]); } return out; };
+  const SA=spots(5), SB=spots(35); // grains rotated 30° in plane (maximum misorientation for a hexagonal lattice)
+  let seed=7; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
+  const gauss=()=>Math.sqrt(-2*Math.log(rnd()+1e-12))*Math.cos(2*Math.PI*rnd());
+  const qR=new Float32Array(K); for(let y=0;y<ky;y++) for(let x=0;x<kx;x++) qR[y*kx+x]=Math.hypot(x-c0,y-c0);
+  const P=new Float32Array(K);
+  for(let sy=0;sy<ny;sy++){ for(let sx=0;sx<nx;sx++){
+    const vac = Math.hypot(sx-50,sy-12)<11;
+    const part = Math.hypot(sx-20,sy-44);
+    const grainB = sx > 30 + 0.35*(sy-32) + 4*Math.sin(sy/6); // curved, inclined boundary
+    let t = vac? 0 : 0.25 + 0.9*sy/ny + (part<8? 0.8 : 0);
+    // projected field around the particle shifts the beam (CoM / DPC contrast)
+    let dx=0, dy=0; if(part>0.5){ const e=1.6*Math.min(1,part/8)*Math.exp(-Math.max(0,part-8)/6); dx=-e*(sx-20)/part; dy=-e*(sy-44)/part; /* beam deflected toward the particle (positive projected potential) */ }
+    const cx=c0+dx, cy=c0+dy; P.fill(0);
+    const disk=(ox,oy,amp)=>{ const x0=Math.max(0,Math.floor(ox-R-1)), x1=Math.min(kx-1,Math.ceil(ox+R+1)), y0=Math.max(0,Math.floor(oy-R-1)), y1=Math.min(ky-1,Math.ceil(oy+R+1));
+      for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){ const v=R+0.5-Math.hypot(x-ox,y-oy); if(v>0) P[y*kx+x]+=amp*Math.min(1,v); } };
+    disk(cx,cy, 40*Math.exp(-0.9*t));
+    if(t>0 && !(part<8)){ const amp=40*(1-Math.exp(-1.2*t))*(grainB?0.75:1.1); for(const [x,y,w] of (grainB?SB:SA)) disk(cx+x,cy+y,amp*w); /* grain B tilted further off zone axis: weaker Bragg scattering */ }
+    const diffuse = t*(part<8? 6 : 2.2);
+    for(let k=0;k<K;k++){ const q=qR[k]; P[k]+= diffuse*Math.exp(-q/12) + (part<8? 3*t*Math.exp(-((q-18)**2)/18) : 0); }
+    const b=(sy*nx+sx)*K;
+    for(let k=0;k<K;k++){ const l=P[k]; const v=l + Math.sqrt(l+0.05)*gauss(); data[b+k]= v>0? v : 0; }
+  }
+    if((sy&7)===7){ busy(`Generating demo dataset… ${Math.round(100*sy/ny)}%`); await tick(); } }
+  await setData(data,ny,nx,ky,kx,"Synthetic demo (two grains rotated 30 deg, vacuum hole, amorphous particle with fringing field)");
+}
+
+// ---------------------------------------------------------------- tilt-corrected bright field
+// Each BF pixel at detector offset k (px from the detector centre) gives an image shifted by
+// d = TC_SIGN * df * theta / step, with theta = mradPerPx*1e-3 * R(rot) * F * k  (F = optional axis swap).
+// tcBF = sum over BF pixels of the normalised image, moved back by -d and splatted onto an (optionally upsampled) grid.
+const TC_SIGN = 1; // Δf > 0 = underfocus (Kirkland), verified against the simulated demo
+function tcParams(){ return {df:+$("tcDf").value||0, rot:(+$("tcRot").value||0)*Math.PI/180, flip:$("tcFlip").checked, mr:+$("tcMr").value||1, st:+$("tcSt").value||1, up:+$("tcUp").value||1}; }
+function tcShift(kxp, kyp, P){ // detector px offset -> scan px shift
+  let a=kxp, b=kyp; if(P.flip){ const t=a; a=b; b=t; }
+  const c=TC_SIGN*P.df*P.mr*1e-3/P.st, cs=Math.cos(P.rot), sn=Math.sin(P.rot);
+  return [c*(cs*a - sn*b), c*(sn*a + cs*b)];
+}
+function bfPixels(){
+  const idx=buildMask(), [cx,cy]=detCenter(), m=S.meanDP; let mx=0; for(const k of idx) if(m[k]>mx) mx=m[k];
+  const out=[]; for(const k of idx) if(m[k]>0.2*mx) out.push(k); return {idx:Int32Array.from(out), cx, cy};
+}
+function computeTCBF(){
+  const {data,K,kx,nx,ny}=S, P=tcParams(), u=P.up, W=nx*u, H=ny*u, {idx,cx,cy}=bfPixels(); S.maskCount=idx.length;
+  const acc=new Float32Array(W*H), wt=new Float32Array(W*H), off=(u-1)/2;
+  for(let i=0;i<idx.length;i++){
+    const k=idx[i], [dx,dy]=tcShift((k%kx)-cx, Math.floor(k/kx)-cy, P), wk=1/S.meanDP[k];
+    for(let sy=0;sy<ny;sy++){ const Y=(sy-dy)*u+off, y0=Math.floor(Y), fy=Y-y0; if(y0<-1||y0>=H) continue;
+      for(let sx=0;sx<nx;sx++){ const X=(sx-dx)*u+off, x0=Math.floor(X), fx=X-x0; if(x0<-1||x0>=W) continue;
+        const v=data[(sy*nx+sx)*K+k]*wk-1;
+        if(y0>=0){ if(x0>=0){ const w=(1-fx)*(1-fy); acc[y0*W+x0]+=w*v; wt[y0*W+x0]+=w; } if(x0+1<W){ const w=fx*(1-fy); acc[y0*W+x0+1]+=w*v; wt[y0*W+x0+1]+=w; } }
+        if(y0+1<H){ if(x0>=0){ const w=(1-fx)*fy; acc[(y0+1)*W+x0]+=w*v; wt[(y0+1)*W+x0]+=w; } if(x0+1<W){ const w=fx*fy; acc[(y0+1)*W+x0+1]+=w*v; wt[(y0+1)*W+x0+1]+=w; } }
+      } }
+  }
+  if(u>1){ gblur(acc,W,H,0.5*u); gblur(wt,W,H,0.5*u); }
+  let wmax=0; for(let i=0;i<W*H;i++) if(wt[i]>wmax) wmax=wt[i];
+  const out=new Float32Array(W*H); for(let i=0;i<W*H;i++) out[i]= wt[i]>0.05*wmax ? acc[i]/wt[i] : NaN;
+  S.img=out; S.imgW=W; S.imgH=H; S.imgUp=u;
+}
+function gblur(a,W,H,sig){
+  const r=Math.ceil(2.5*sig), g=new Float32Array(2*r+1); for(let i=-r;i<=r;i++) g[i+r]=Math.exp(-i*i/(2*sig*sig));
+  const t=new Float32Array(W*H);
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ let s=0; for(let i=-r;i<=r;i++){ const xx=x+i; if(xx>=0&&xx<W) s+=g[i+r]*a[y*W+xx]; } t[y*W+x]=s; }
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){ let s=0; for(let i=-r;i<=r;i++){ const yy=y+i; if(yy>=0&&yy<H) s+=g[i+r]*t[yy*W+x]; } a[y*W+x]=s; }
+}
+async function fitTCBF(){
+  if(!S.data) return;
+  busy("Fitting defocus and rotation…"); await tick();
+  const {data,K,kx,nx,ny}=S, {idx,cx,cy}=bfPixels(), P0=tcParams();
+  if(idx.length<9) throw new Error("Too few bright-field pixels inside the detector.");
+  // central crop of the scan (≤128 px), zero-padded ×2 for linear correlation
+  const cw=Math.min(nx,128), ch=Math.min(ny,128), ox=(nx-cw)>>1, oy=(ny-ch)>>1;
+  let Pn=1; while(Pn<2*Math.max(cw,ch)) Pn<<=1; const fft=makeFFT(Pn);
+  // group BF pixels into angular blocks
+  let rr=0; for(const k of idx) rr=Math.max(rr,Math.hypot((k%kx)-cx, Math.floor(k/kx)-cy));
+  const b=Math.max(1,Math.round(2*rr/8)), groups=new Map();
+  for(const k of idx){ const ax=(k%kx)-cx, ay=Math.floor(k/kx)-cy, key=Math.floor(ax/b)+","+Math.floor(ay/b); if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(k); }
+  const G=[]; // {img (cw*ch), tx, ty}
+  const han=new Float32Array(cw*ch); for(let y=0;y<ch;y++) for(let x=0;x<cw;x++) han[y*cw+x]=(0.5-0.5*Math.cos(2*Math.PI*(x+0.5)/cw))*(0.5-0.5*Math.cos(2*Math.PI*(y+0.5)/ch));
+  for(const ks of groups.values()){ if(ks.length<Math.max(1,b*b/3)) continue;
+    const img=new Float32Array(cw*ch); let tx=0,ty=0;
+    for(const k of ks){ const wk=1/S.meanDP[k]; tx+=(k%kx)-cx; ty+=Math.floor(k/kx)-cy;
+      for(let y=0;y<ch;y++) for(let x=0;x<cw;x++) img[y*cw+x]+=data[((y+oy)*nx+x+ox)*K+k]*wk; }
+    let m=0; for(const v of img) m+=v; m/=img.length; for(let i=0;i<img.length;i++) img[i]=(img[i]-m)*han[i];
+    G.push({img, tx:tx/ks.length, ty:ty/ks.length}); }
+  if(G.length<4) throw new Error("Too few bright-field pixel groups; enlarge the detector circle over the BF disk.");
+  const spec=img=>{ const re=new Float64Array(Pn*Pn), im=new Float64Array(Pn*Pn); for(let y=0;y<ch;y++) for(let x=0;x<cw;x++) re[y*Pn+x]=img[y*cw+x]; fft(re,im,false); return [re,im]; };
+  const specs=G.map(g=>spec(g.img)), maxS=Math.max(2, Math.min(cw,ch)/3);
+  // reference = central groups (|theta| small → nearly unshifted coherent BF image)
+  const gr=G.map(g=>Math.hypot(g.tx,g.ty)), order=gr.map((r,i)=>i).sort((i,j)=>gr[i]-gr[j]);
+  const nRef=Math.min(4,G.length), rre=new Float64Array(Pn*Pn), rim=new Float64Array(Pn*Pn);
+  for(const i of order.slice(0,nRef)){ const [re,im]=specs[i]; for(let q=0;q<Pn*Pn;q++){ rre[q]+=re[q]; rim[q]+=im[q]; } }
+  const corrs=G.map((g,gi)=>{ const [re,im]=specs[gi], cr=new Float64Array(Pn*Pn), ci=new Float64Array(Pn*Pn);
+    for(let q=0;q<Pn*Pn;q++){ cr[q]=re[q]*rre[q]+im[q]*rim[q]; ci[q]=im[q]*rre[q]-re[q]*rim[q]; }
+    fft(cr,ci,true); return cr; });
+  const peak=(cr,px,py,L)=>{ const at=(dx,dy)=>cr[(((dy%Pn)+Pn)%Pn)*Pn+(((dx%Pn)+Pn)%Pn)];
+    let best=-Infinity,bx=0,by=0; const cx0=Math.round(px), cy0=Math.round(py);
+    for(let dy=cy0-L;dy<=cy0+L;dy++) for(let dx=cx0-L;dx<=cx0+L;dx++){ if(Math.abs(dx)>maxS||Math.abs(dy)>maxS) continue; const v=at(dx,dy); if(v>best){best=v;bx=dx;by=dy;} }
+    const par=(a,c,b2)=>{ const d=a-2*c+b2; return d<0? Math.max(-0.5,Math.min(0.5,0.5*(a-b2)/d)) : 0; };
+    return [bx+par(at(bx-1,by),best,at(bx+1,by)), by+par(at(bx,by-1),best,at(bx,by+1))]; };
+  let M=[[0,0],[0,0]], t=[0,0]; const shifts=new Array(G.length).fill(null);
+  const refit=(use)=>{ const solve=col=>{ const ATA=[[0,0,0],[0,0,0],[0,0,0]], ATb=[0,0,0];
+      G.forEach((g,i)=>{ if(!use[i]||!shifts[i]) return; const a=[g.tx,g.ty,1]; for(let r=0;r<3;r++){ ATb[r]+=a[r]*shifts[i][col]; for(let c=0;c<3;c++) ATA[r][c]+=a[r]*a[c]; } });
+      return solve3(ATA,ATb); };
+    const sx=solve(0), sy=solve(1); M=[[sx[0],sx[1]],[sy[0],sy[1]]]; t=[sx[2],sy[2]]; };
+  const pred=g=>[M[0][0]*g.tx+M[0][1]*g.ty+t[0], M[1][0]*g.tx+M[1][1]*g.ty+t[1]];
+  // grow outward: innermost groups searched freely (small shifts), others around the model prediction
+  const fracs=[0.25,0.35,0.45,0.55,0.65,0.75,0.85,1], gmaxR=gr[order[order.length-1]];
+  for(let it=0; it<fracs.length; it++){
+    const use=G.map((g,i)=>gr[i]<=fracs[it]*gmaxR+1e-9); order.slice(0,6).forEach(i=>use[i]=true);
+    G.forEach((g,i)=>{ if(!use[i]) return; const free = it===0; const [px,py]= free? [0,0] : pred(g); shifts[i]=peak(corrs[i],px,py, free? Math.min(Math.ceil(maxS),4) : 2); });
+    refit(use);
+    busy(`Fitting defocus and rotation… step ${it+1}/${fracs.length}`); await tick();
+  }
+  // final robust pass: drop groups whose shift disagrees with the model by > 1.5 px
+  const all=G.map(()=>true); G.forEach((g,i)=>{ const [px,py]=pred(g); if(Math.hypot(shifts[i][0]-px, shifts[i][1]-py)>1.5) all[i]=false; }); refit(all);
+  // decompose M = c·R(phi)·F
+  const det=M[0][0]*M[1][1]-M[0][1]*M[1][0], flip=det<0, Mm = flip? [[M[0][1],M[0][0]],[M[1][1],M[1][0]]] : M;
+  const a=(Mm[0][0]+Mm[1][1])/2, bb=(Mm[1][0]-Mm[0][1])/2; let c=Math.hypot(a,bb), phi=Math.atan2(bb,a)*180/Math.PI;
+  // pick the (df, phi) / (-df, phi+180) representation closest to the current rotation
+  const near=(x)=>{ let d=((x-P0.rot*180/Math.PI)%360+540)%360-180; return Math.abs(d); };
+  if(near(phi+180)<near(phi)){ c=-c; phi+=180; } phi=((phi+180)%360+360)%360-180;
+  const df = c*P0.st/(TC_SIGN*P0.mr*1e-3);
+  $("tcDf").value=+df.toFixed(1); $("tcRot").value=+phi.toFixed(1); $("tcFlip").checked=flip;
+  const iso=Math.abs(Mm[0][0]-Mm[1][1])+Math.abs(Mm[0][1]+Mm[1][0]);
+  $("tcInfo").textContent=`fit: ${G.length} groups, max shift ${(Math.abs(c)*rr).toFixed(1)} px${iso>0.3*Math.abs(c)+1e-9?" · anisotropic (astigmatism?)":""}`;
+  busy(); update(true,false);
+}
+function solve3(A,b){ const m=A.map((r,i)=>[...r,b[i]]);
+  for(let i=0;i<3;i++){ let p=i; for(let r=i+1;r<3;r++) if(Math.abs(m[r][i])>Math.abs(m[p][i])) p=r; [m[i],m[p]]=[m[p],m[i]];
+    const d=m[i][i]||1e-12; for(let c=i;c<4;c++) m[i][c]/=d; for(let r=0;r<3;r++) if(r!==i){ const f=m[r][i]; for(let c=i;c<4;c++) m[r][c]-=f*m[i][c]; } }
+  return [m[0][3],m[1][3],m[2][3]]; }
+for(const id of ["tcDf","tcRot","tcMr","tcSt","acKV","acCs","acAl","acEps","idHp"]) $(id).addEventListener("input",()=>update(true,false));
+for(const id of ["tcFlip","tcUp"]) $(id).addEventListener("change",()=>update(true,false));
+$("tcDf").addEventListener("input",()=>{ if($("tcInfo").textContent.startsWith("Δf set")) $("tcInfo").textContent=""; });
+$("tcFit").addEventListener("click",()=>fitTCBF().catch(e=>{ busy(); showError(e); }));
+
+// ---------------------------------------------------------------- ACBF: aberration-corrected bright field
+// Weak-phase model. BF pixel k (scan-frame wavevector, Å⁻¹) records I_k(g) = T_k(g) φ(g) with
+//   T_k(g) = i[ A(k−g) e^{i(χ(k)−χ(k−g))} − A(k+g) e^{−i(χ(k)−χ(k+g))} ],  χ(q) = πλq²(½Csλ²q² − Δf).
+// Combined estimate: φ̂(g) = Σ_k T_k*(g) Î_k(g) / (Σ_k |T_k(g)|² + ε·max Σ|T|²)  — removes both the image shifts
+// (tcBF) and the residual CTF phase, giving a transfer function without zero crossings out to 2α.
+function acAlpha(){ const v=parseFloat($("acAl").value); return Number.isFinite(v)&&v>0 ? v : (S.bf? S.bf.r*(+$("tcMr").value||1) : 1); }
+function acbfKey(){ return JSON.stringify([tcParams(), $("acKV").value, $("acCs").value, acAlpha(), $("acEps").value, S.det.shape, S.det.cx, S.det.cy, S.det.r, S.det.ri, S.det.ro, S.det.x0, S.det.x1, S.det.y0, S.det.y1, S.name]); }
+let acbfJob=0, acbfTimer=0;
+function useACBF(){
+  const key=acbfKey();
+  if(S.acbf && S.acbf.key===key && S.acbf.name===S.name){ S.img=S.acbf.img; S.imgW=S.acbf.W; S.imgH=S.acbf.H; S.imgUp=S.acbf.u; S.maskCount=S.acbf.n; return; }
+  if(!S.acbf || S.acbf.name!==S.name || S.acbf.img.length!==S.img.length){ const u=S.imgUp||1; if(!(S.img && S.img.length===S.imgW*S.imgH)){ S.img=new Float32Array(S.nx*S.ny).fill(NaN); S.imgW=S.nx; S.imgH=S.ny; S.imgUp=1; } }
+  clearTimeout(acbfTimer); acbfTimer=setTimeout(()=>runACBF().catch(e=>{ $("acInfo").textContent=""; showError(e); }), 200);
+}
+async function runACBF(){
+  const job=++acbfJob, key=acbfKey(), t0=performance.now();
+  const {data,K,kx,nx,ny}=S, P=tcParams(), {idx,cx,cy}=bfPixels(), u=P.up;
+  const V=(+$("acKV").value||300)*1e3, lam=12.2643/Math.sqrt(V*(1+0.97848e-6*V)), Cs=(+$("acCs").value||0)*1e7, eps=Math.max(0,+$("acEps").value||0);
+  const mr=P.mr*1e-3, kap=acAlpha()*1e-3/lam, kap2=kap*kap;
+  let Pn=1; while(Pn<Math.max(nx,ny)) Pn<<=1; const fft=makeFFT(Pn), NN=Pn*Pn;
+  const tk=(n,i)=>{ const e=Math.min(8,Math.floor(n/8)); return i<e? 0.5-0.5*Math.cos(Math.PI*(i+0.5)/e) : i>=n-e? 0.5-0.5*Math.cos(Math.PI*(n-i-0.5)/e) : 1; };
+  const win=new Float32Array(nx*ny); for(let y=0;y<ny;y++) for(let x=0;x<nx;x++) win[y*nx+x]=tk(nx,x)*tk(ny,y);
+  const gx=new Float64Array(Pn); for(let h=0;h<Pn;h++) gx[h]=((h<Pn/2?h:h-Pn)/Pn)/P.st; // Å⁻¹ (square scan pixels)
+  const chi=(qx,qy)=>{ const q2=qx*qx+qy*qy; return Math.PI*lam*q2*(0.5*Cs*lam*lam*q2-P.df); };
+  const nr=new Float64Array(NN), ni=new Float64Array(NN), den=new Float64Array(NN), re=new Float64Array(NN), im=new Float64Array(NN);
+  const cs=Math.cos(P.rot), sn=Math.sin(P.rot);
+  for(let i=0;i<idx.length;i++){
+    if(job!==acbfJob) return;
+    const k=idx[i]; let a=(k%kx)-cx, b=Math.floor(k/kx)-cy; if(P.flip){ const t=a; a=b; b=t; }
+    const kvx=mr*(cs*a-sn*b)/lam, kvy=mr*(sn*a+cs*b)/lam, ck=chi(kvx,kvy), wk=1/S.meanDP[k];
+    re.fill(0); im.fill(0); let m=0;
+    for(let y=0;y<ny;y++) for(let x=0;x<nx;x++){ const v=data[(y*nx+x)*K+k]*wk-1; re[y*Pn+x]=v; m+=v; }
+    m/=nx*ny; for(let y=0;y<ny;y++) for(let x=0;x<nx;x++) re[y*Pn+x]=(re[y*Pn+x]-m)*win[y*nx+x];
+    fft(re,im,false);
+    for(let v=0;v<Pn;v++){ const gy=gx[v]; for(let h=0;h<Pn;h++){ const g0=gx[h], q=v*Pn+h;
+      let Tr=0, Ti=0, dx=kvx-g0, dy=kvy-gy;
+      if(dx*dx+dy*dy<=kap2){ const ph=ck-chi(dx,dy); Tr-=Math.sin(ph); Ti+=Math.cos(ph); }
+      dx=kvx+g0; dy=kvy+gy;
+      if(dx*dx+dy*dy<=kap2){ const ph=ck-chi(dx,dy); Tr-=Math.sin(ph); Ti-=Math.cos(ph); }
+      if(Tr===0&&Ti===0) continue;
+      const Ir=re[q], Ii=im[q]; nr[q]+=Tr*Ir+Ti*Ii; ni[q]+=Tr*Ii-Ti*Ir; den[q]+=Tr*Tr+Ti*Ti; } }
+    if((i&15)===15){ $("acInfo").textContent=`computing… ${Math.round(100*i/idx.length)}%`; await tick(); }
+  }
+  let dmax=0; for(let q=1;q<NN;q++) if(den[q]>dmax) dmax=den[q];
+  const reg=eps*dmax+1e-12, Pu=Pn*u, NU=Pu*Pu, fr=new Float64Array(NU), fi=new Float64Array(NU);
+  for(let v=0;v<Pn;v++){ if(v===Pn/2 && Pn>1) continue; const vv= v<Pn/2? v : v-Pn+Pu;
+    for(let h=0;h<Pn;h++){ if(h===Pn/2 && Pn>1) continue; const hh= h<Pn/2? h : h-Pn+Pu, q=v*Pn+h, d=den[q]+reg; if(q===0) continue;
+      fr[vv*Pu+hh]=nr[q]/d; fi[vv*Pu+hh]=ni[q]/d; } }
+  makeFFT(Pu)(fr,fi,true);
+  const W=nx*u, H=ny*u, out=new Float32Array(W*H); for(let y=0;y<H;y++) for(let x=0;x<W;x++) out[y*W+x]=fr[y*Pu+x]/NN;
+  if(job!==acbfJob) return;
+  S.acbf={key, name:S.name, img:out, W, H, u, n:idx.length};
+  $("acInfo").textContent=`${idx.length} BF pixels · λ ${lam.toFixed(4)} Å · ${(performance.now()-t0).toFixed(0)} ms`;
+  update(true,false);
+}
+
+// ---------------------------------------------------------------- iDPC (integrated centre of mass)
+// CoM over the detector mask (detector px, mean removed) → rotate/flip into scan frame → deflection θ (rad)
+// ∇φ = (2π/λ) θ  ⇒  φ̂(g) = g·Θ̂(g) / (iλ(|g|² + g0²)),  g in Å⁻¹, g0 = 1/high-pass length.
+function comField(){
+  const {data,N,K,kx}=S, idx=buildMask(), n=idx.length, [cx,cy]=detCenter(); S.maskCount=n;
+  const wx=new Float32Array(n), wy=new Float32Array(n); for(let i=0;i<n;i++){ wx[i]=(idx[i]%kx)-cx; wy[i]=Math.floor(idx[i]/kx)-cy; }
+  const ax=new Float64Array(N), ay=new Float64Array(N); let mx=0,my=0;
+  for(let p=0;p<N;p++){ const b=p*K; let s=0,sx=0,sy=0; for(let i=0;i<n;i++){ const v=data[b+idx[i]]; s+=v; sx+=v*wx[i]; sy+=v*wy[i]; }
+    ax[p]= s? sx/s : 0; ay[p]= s? sy/s : 0; mx+=ax[p]; my+=ay[p]; }
+  mx/=N; my/=N; for(let p=0;p<N;p++){ ax[p]-=mx; ay[p]-=my; }
+  return [ax,ay];
+}
+function integrateCoM(ax, ay, rot, flip){
+  const {nx,ny}=S, P=tcParams(), V=(+$("acKV").value||300)*1e3, lam=12.2643/Math.sqrt(V*(1+0.97848e-6*V)), sc=P.mr*1e-3;
+  const cs=Math.cos(rot), sn=Math.sin(rot), hp=+$("idHp").value||0, g02= hp>0? 1/(hp*hp) : 0;
+  let Pn=1; while(Pn<2*Math.max(nx,ny)) Pn<<=1; const NN=Pn*Pn, fft=makeFFT(Pn);
+  const xr=new Float64Array(NN), xi=new Float64Array(NN), yr=new Float64Array(NN), yi=new Float64Array(NN);
+  for(let y=0;y<ny;y++) for(let x=0;x<nx;x++){ const p=y*nx+x; let a=ax[p], b=ay[p]; if(flip){ const t=a; a=b; b=t; }
+    xr[y*Pn+x]=sc*(cs*a-sn*b); yr[y*Pn+x]=sc*(sn*a+cs*b); }
+  fft(xr,xi,false); fft(yr,yi,false);
+  const g=new Float64Array(Pn); for(let h=0;h<Pn;h++) g[h]=((h<Pn/2?h:h-Pn)/Pn)/P.st;
+  for(let v=0;v<Pn;v++) for(let h=0;h<Pn;h++){ const q=v*Pn+h, gx=g[h], gy=g[v], d=lam*(gx*gx+gy*gy+g02);
+    if(q===0||d===0){ xr[q]=0; xi[q]=0; continue; }
+    const Ar=gx*xr[q]+gy*yr[q], Ai=gx*xi[q]+gy*yi[q]; xr[q]=Ai/d; xi[q]=-Ar/d; } // −i·A/d
+  fft(xr,xi,true);
+  const out=new Float32Array(nx*ny); let m=0; for(let y=0;y<ny;y++) for(let x=0;x<nx;x++){ const v=xr[y*Pn+x]/NN; out[y*nx+x]=v; m+=v; }
+  m/=nx*ny; for(let i=0;i<out.length;i++) out[i]-=m;
+  return out;
+}
+function computeIDPC(){
+  const [ax,ay]=comField(), P=tcParams();
+  S.img=integrateCoM(ax,ay,P.rot,P.flip); S.imgW=S.nx; S.imgH=S.ny; S.imgUp=1;
+}
+function fitRotationCurl(){
+  if(!S.data) return;
+  const [ax,ay]=comField(), {nx,ny}=S; const res=[];
+  for(const flip of [false,true]){
+    let Scc=0,Sdd=0,Scd=0;
+    for(let y=1;y<ny-1;y++) for(let x=1;x<nx-1;x++){
+      const A=(xx,yy)=>{ const p=yy*nx+xx; return flip? ay[p] : ax[p]; }, B=(xx,yy)=>{ const p=yy*nx+xx; return flip? ax[p] : ay[p]; };
+      const C=(B(x+1,y)-B(x-1,y)-A(x,y+1)+A(x,y-1))/2, D=(A(x+1,y)-A(x-1,y)+B(x,y+1)-B(x,y-1))/2;
+      Scc+=C*C; Sdd+=D*D; Scd+=C*D; }
+    const E=f=>Math.cos(f)**2*Scc+2*Math.sin(f)*Math.cos(f)*Scd+Math.sin(f)**2*Sdd;
+    let f=0.5*Math.atan2(2*Scd, Scc-Sdd); if(E(f+Math.PI/2)<E(f)) f+=Math.PI/2;
+    res.push({flip, rot:f, ratio:E(f)/(Scc+Sdd+1e-30)});
+  }
+  res.sort((a,b)=>a.ratio-b.ratio); let {flip,rot,ratio}=res[0];
+  // 180° ambiguity: the projected potential (positive phase) correlates positively with a virtual ADF image
+  // (scattering outside the BF disk); fall back to skewness if there is no usable dark-field signal.
+  const img=integrateCoM(ax,ay,rot,flip), {data,K,kx,ky,N}=S, adf=new Float64Array(N);
+  if(S.bf){ const r2=(1.15*S.bf.r)**2, ks=[]; for(let y=0;y<ky;y++) for(let x=0;x<kx;x++) if((x-S.bf.cx)**2+(y-S.bf.cy)**2>r2) ks.push(y*kx+x);
+    for(let p=0;p<N;p++){ const b=p*K; let t=0; for(const k of ks) t+=data[b+k]; adf[p]=t; } }
+  let mi=0, ma=0; for(let p=0;p<N;p++){ mi+=img[p]; ma+=adf[p]; } mi/=N; ma/=N;
+  let cov=0, va=0, vi=0, m3=0; for(let p=0;p<N;p++){ const di=img[p]-mi, da=adf[p]-ma; cov+=di*da; va+=da*da; vi+=di*di; m3+=di*di*di; }
+  const corr = va>0&&vi>0 ? cov/Math.sqrt(va*vi) : 0, how = Math.abs(corr)>0.05 ? "ADF correlation" : "skewness";
+  if(how==="ADF correlation" ? corr<0 : m3<0) rot+=Math.PI;
+  let deg=rot*180/Math.PI; deg=((deg+180)%360+360)%360-180;
+  $("tcRot").value=+deg.toFixed(1); $("tcFlip").checked=flip;
+  $("idInfo").textContent=`curl/total ${(ratio*100).toFixed(1)}% (other flip ${(res[1].ratio*100).toFixed(1)}%) · sign from ${how}${how==="ADF correlation"?` (r = ${Math.abs(corr).toFixed(2)})`:""}`;
+  update(true,false);
+}
+$("idFit").addEventListener("click",()=>{ try{ fitRotationCurl(); }catch(e){ showError(e); } });
+
+// ---------------------------------------------------------------- WS2 monolayer demo (probe × transmission function → |FFT|²)
+function makeFFT(n){
+  const lg=Math.log2(n), rev=new Uint32Array(n), cs=new Float64Array(n/2), sn=new Float64Array(n/2);
+  for(let i=0;i<n;i++){ let r=0; for(let b=0;b<lg;b++) r|=((i>>b)&1)<<(lg-1-b); rev[i]=r; }
+  for(let i=0;i<n/2;i++){ cs[i]=Math.cos(2*Math.PI*i/n); sn[i]=-Math.sin(2*Math.PI*i/n); }
+  const f1=(re,im,off,stride,inv)=>{
+    for(let i=0;i<n;i++){ const j=rev[i]; if(j>i){ const a=off+i*stride, b=off+j*stride; let t=re[a]; re[a]=re[b]; re[b]=t; t=im[a]; im[a]=im[b]; im[b]=t; } }
+    for(let size=2;size<=n;size<<=1){ const h=size>>1, st=n/size;
+      for(let s=0;s<n;s+=size) for(let k=0;k<h;k++){ const wr=cs[k*st], wi=inv?-sn[k*st]:sn[k*st];
+        const a=off+(s+k)*stride, b=off+(s+k+h)*stride, xr=re[b]*wr-im[b]*wi, xi=re[b]*wi+im[b]*wr;
+        re[b]=re[a]-xr; im[b]=im[a]-xi; re[a]+=xr; im[a]+=xi; } }
+  };
+  return (re,im,inv)=>{ for(let r=0;r<n;r++) f1(re,im,r*n,1,inv); for(let c=0;c<n;c++) f1(re,im,c,n,inv); };
+}
+async function demoWS2(alphaMrad, dfA=0){
+  busy("Simulating WS₂ 4D-STEM data…"); await tick();
+  // Instrument: 80 kV, 21.4 mrad convergence semi-angle, in focus. Sampling 0.4 Å, 64×64 window → 64×64 pattern, ±52 mrad.
+  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, defocus=dfA, dose=5e5;
+  const G=nS+N, phi=new Float32Array(G*G);
+  // 1H-WS2: a = 3.18 Å; W at origin, S2 column at (a1+a2)/3. Lattice rotated 12°.
+  const a=3.18, th=12*Math.PI/180, rot=(x,y)=>[x*Math.cos(th)-y*Math.sin(th), x*Math.sin(th)+y*Math.cos(th)];
+  const a1=rot(a,0), a2=rot(a/2,a*Math.sqrt(3)/2), o=G*dx/2;
+  const sig=0.35, PW=0.50, PS=0.18;         // peak phase (rad) of W column and of one S atom, after thermal/source blur
+  const defects={"W:1,-2":0, "S:-2,1":1, "S:2,1":0, "S:0,3":1}; // value = number of S atoms remaining (W:0 = vacancy)
+  const addG=(x,y,amp)=>{ const cx=x/dx, cy=y/dx, R=Math.ceil(3*sig/dx);
+    for(let iy=Math.max(0,Math.floor(cy)-R); iy<=Math.min(G-1,Math.ceil(cy)+R); iy++) for(let ix=Math.max(0,Math.floor(cx)-R); ix<=Math.min(G-1,Math.ceil(cx)+R); ix++)
+      phi[iy*G+ix]+=amp*Math.exp(-(((ix-cx)**2+(iy-cy)**2)*dx*dx)/(2*sig*sig)); };
+  for(let i=-14;i<=14;i++) for(let j=-14;j<=14;j++){
+    const wx=o+i*a1[0]+j*a2[0], wy=o+i*a1[1]+j*a2[1];
+    if(wx<-2||wy<-2||wx>G*dx+2||wy>G*dx+2) continue;
+    const kW="W:"+i+","+j, kS="S:"+i+","+j;
+    if(!(kW in defects)) addG(wx,wy,PW); else if(defects[kW]>0) addG(wx,wy,PW*defects[kW]);
+    const nS2 = kS in defects ? defects[kS] : 2;
+    if(nS2>0) addG(wx+(a1[0]+a2[0])/3, wy+(a1[1]+a2[1])/3, PS*nS2);
+  }
+  const tre=new Float32Array(G*G), tim=new Float32Array(G*G);
+  for(let i=0;i<G*G;i++){ tre[i]=Math.cos(phi[i]); tim[i]=Math.sin(phi[i]); }
+  // probe: aperture in k-space (soft 1-px edge), defocus phase, inverse FFT, centred in window
+  const fft=makeFFT(N), pr=new Float64Array(N*N), pi=new Float64Array(N*N), dk=1/(N*dx), kmax=alpha/lam;
+  for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
+    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k=Math.hypot(fx,fy);
+    const A=Math.min(1,Math.max(0,(kmax-k)/dk+0.5)), chi=-Math.PI*lam*defocus*k*k, /* Kirkland: chi = pi*lam*k^2*(Cs..-df), df>0 underfocus */ sgn=((ix+iy)&1)?-1:1; // sgn shifts probe to window centre
+    pr[iy*N+ix]=sgn*A*Math.cos(-chi); pi[iy*N+ix]=sgn*A*Math.sin(-chi);
+  }
+  fft(pr,pi,true);
+  let pn=0; for(let i=0;i<N*N;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<N*N;i++){ pr[i]/=pn; pi[i]/=pn; }
+  let seed=11; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return (seed+0.5)/4294967296; };
+  const poisson=l=>{ if(l>30) return Math.max(0,Math.round(l+Math.sqrt(l)*Math.sqrt(-2*Math.log(rnd()))*Math.cos(2*Math.PI*rnd()))); const L=Math.exp(-l); let k=0,p=1; do{ k++; p*=rnd(); }while(p>L); return k-1; };
+  const K=N*N, data=new Float32Array(nS*nS*K), er=new Float64Array(K), ei=new Float64Array(K), h=N/2;
+  for(let sy=0;sy<nS;sy++){
+    for(let sx=0;sx<nS;sx++){
+      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx, wb=y*N; for(let x=0;x<N;x++){ const g=gb+x, w=wb+x; er[w]=pr[w]*tre[g]-pi[w]*tim[g]; ei[w]=pr[w]*tim[g]+pi[w]*tre[g]; } }
+      fft(er,ei,false);
+      const b=(sy*nS+sx)*K;
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const s=((y+h)%N)*N+((x+h)%N), I=(er[s]*er[s]+ei[s]*ei[s])/K*dose; data[b+y*N+x]=poisson(I); }
+    }
+    if((sy&3)===3){ busy(`Simulating WS₂ 4D-STEM data… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
+  }
+  await setData(data,nS,nS,N,N,`WS2 monolayer sim (80 kV, ${alphaMrad} mrad, ${dfA?dfA/10+" nm underfocus, ":""}0.4 A step, 5e5 e per pattern, W and S vacancies)`);
+  S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:dx}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=dx; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=alphaMrad;
+  if(dfA){ $("signal").value="tcbf"; $("signal").dispatchEvent(new Event("change")); $("tcInfo").textContent="Δf set to 0: press Fit, or type 200"; return; }
+  // default: annulus over the disk-overlap region (beyond the BF disk edge out to the first-order disks)
+  const r0=kmax/dk; Object.assign(S.det,{shape:"annulus", cx:N/2, cy:N/2, r:+r0.toFixed(1), ri:+(r0+1).toFixed(1), ro:+Math.min(2.1*r0, N/2-1).toFixed(1)});
+  $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="annulus")); buildGeoInputs(); update(true,true);
+}
+
+// ---------------------------------------------------------------- two single atoms at different heights (2-slice multislice)
+async function demoAtoms(){
+  busy("Simulating two single atoms…"); await tick();
+  // 80 kV, 21.4 mrad, focused on atom A's plane. Atom B sits dz = 20 nm further along the beam:
+  // probe → ×t_A → Fresnel propagate dz → ×t_B → far field. At B the probe is 200 Å overfocused (Δf = −200 Å, Kirkland sign).
+  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=0.0214, dz=200, dose=5e5, K=N*N, h=N/2;
+  const G=nS+N, o=G*dx/2, sig=0.35, PW=0.5;
+  const mkT=(ax,ay)=>{ const re=new Float32Array(G*G), im=new Float32Array(G*G);
+    for(let iy=0;iy<G;iy++) for(let ix=0;ix<G;ix++){ const r2=((ix*dx-ax)**2+(iy*dx-ay)**2), ph=PW*Math.exp(-r2/(2*sig*sig)); re[iy*G+ix]=Math.cos(ph); im[iy*G+ix]=Math.sin(ph); }
+    return [re,im]; };
+  const [aR,aI]=mkT(o-4.6,o-3.0), [bR,bI]=mkT(o+4.6,o+3.0);   // A upper-left (in focus), B lower-right (20 nm below)
+  const fft=makeFFT(N), pr=new Float64Array(K), pi=new Float64Array(K), dk=1/(N*dx), kmax=alpha/lam, qr=new Float64Array(K), qi=new Float64Array(K);
+  for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
+    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k2=fx*fx+fy*fy, A=Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5)), sgn=((ix+iy)&1)?-1:1;
+    pr[iy*N+ix]=sgn*A; pi[iy*N+ix]=0;
+    const ph=-Math.PI*lam*dz*k2, bl = Math.sqrt(k2) < 0.95/(2*dx) ? 1 : 0; qr[iy*N+ix]=bl*Math.cos(ph)/K; qi[iy*N+ix]=bl*Math.sin(ph)/K; // propagator (÷K for unnormalised inverse FFT)
+  }
+  fft(pr,pi,true); let pn=0; for(let i=0;i<K;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<K;i++){ pr[i]/=pn; pi[i]/=pn; }
+  let seed=23; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return (seed+0.5)/4294967296; };
+  const poisson=l=>{ if(l>30) return Math.max(0,Math.round(l+Math.sqrt(l)*Math.sqrt(-2*Math.log(rnd()))*Math.cos(2*Math.PI*rnd()))); const L=Math.exp(-l); let k=0,p=1; do{ k++; p*=rnd(); }while(p>L); return k-1; };
+  const data=new Float32Array(nS*nS*K), er=new Float64Array(K), ei=new Float64Array(K);
+  for(let sy=0;sy<nS;sy++){
+    for(let sx=0;sx<nS;sx++){
+      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x; er[w]=pr[w]*aR[g]-pi[w]*aI[g]; ei[w]=pr[w]*aI[g]+pi[w]*aR[g]; } }
+      fft(er,ei,false);
+      for(let i=0;i<K;i++){ const a=er[i], b=ei[i]; er[i]=a*qr[i]-b*qi[i]; ei[i]=a*qi[i]+b*qr[i]; }
+      fft(er,ei,true);
+      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
+      fft(er,ei,false);
+      const bo=(sy*nS+sx)*K;
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y+h)%N)*N+((x+h)%N); data[bo+y*N+x]=poisson((er[q]*er[q]+ei[q]*ei[q])/K*dose); }
+    }
+    if((sy&3)===3){ busy(`Simulating two single atoms… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
+  }
+  await setData(data,nS,nS,N,N,"Two W atoms: A (upper left) at focus, B (lower right) 20 nm below (80 kV, 21.4 mrad, 0.4 A step, 5e5 e per pattern)");
+  S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:dx}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=dx; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=21.4;
+  const r0=kmax/dk; Object.assign(S.det,{shape:"annulus", cx:N/2, cy:N/2, r:+(0.92*r0).toFixed(1), ri:+(r0+1).toFixed(1), ro:+Math.min(2.1*r0, N/2-1).toFixed(1)});
+  $("signal").value="sum"; $("signal").dispatchEvent(new Event("change"));
+  $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="annulus")); buildGeoInputs(); update(true,true);
+}
+
+// ---------------------------------------------------------------- saving (PNG / PDF / CSV)
+let DL=null;
+(async()=>{ try{ if(window.claude && window.claude.use) DL=await window.claude.use("downloads"); }catch(e){ DL=null; } })();
+const stem=()=>(S.name||"data").split(":")[0].split(" (")[0].replace(/\.[^.]+$/,"").replace(/[^\w.-]+/g,"_").slice(0,60);
+function detLabel(){ const d=S.det, sig={sum:"integrated intensity",comx:"CoM x",comy:"CoM y",comm:"|CoM|",idpc:`iDPC from CoM (rot ${$("tcRot").value} deg${$("tcFlip").checked?", flipped":""}, ${$("tcMr").value} mrad/px, step ${$("tcSt").value} A, ${$("acKV").value} kV${+$("idHp").value>0?`, high-pass ${$("idHp").value} A`:""}; phase in rad)`, acbf:`ACBF (df ${$("tcDf").value} A, Cs ${$("acCs").value} mm, ${$("acKV").value} kV, alpha ${acAlpha().toFixed(1)} mrad, eps ${$("acEps").value}, rot ${$("tcRot").value} deg${$("tcFlip").checked?", flipped":""})`, tcbf:`tilt-corrected BF (df ${$("tcDf").value} A, rot ${$("tcRot").value} deg${$("tcFlip").checked?", flipped":""}, ${$("tcMr").value} mrad/px, step ${$("tcSt").value} A, ${S.imgUp}x upsampled)`}[$("signal").value];
+  const g = d.shape==="point"?`point (x ${Math.round(d.cx)}, y ${Math.round(d.cy)})` : d.shape==="circle"?`circle centre (${d.cx}, ${d.cy}) r ${d.r} px` : d.shape==="annulus"?`annulus centre (${d.cx}, ${d.cy}) r ${d.ri}-${d.ro} px` : `rectangle x ${Math.min(d.x0,d.x1)}-${Math.max(d.x0,d.x1)}, y ${Math.min(d.y0,d.y1)}-${Math.max(d.y0,d.y1)} px`;
+  return `Detector: ${g}; signal: ${sig}`; }
+function posLabel(){ if(S.rsMode==="rect"&&S.rsRect){ const r=S.rsRect; return `Pattern: average over scan x ${Math.min(r.x0,r.x1)}-${Math.max(r.x0,r.x1)}, y ${Math.min(r.y0,r.y1)}-${Math.max(r.y0,r.y1)}`; }
+  const sh=$("dpShow").value; return sh==="mean"?"Pattern: mean over all positions":sh==="max"?"Pattern: max over all positions":`Pattern at probe (x ${S.probe.x}, y ${S.probe.y}); ${$("dpScale").selectedOptions[0].text} scale`; }
+
+function composite(which, overlay, native){
+  const parts=[];
+  if(which!=="im") parts.push({c:$("dpCan"), w:$("dpCan").width, h:$("dpCan").height, n:S.kx, ov:dpOverlayOn});
+  if(which==="ps"){ if(!S.ps) drawPS(); parts.push({c:$("psCan"), w:$("psCan").width, h:$("psCan").height, n:1, ov:()=>{}}); }
+  else if(which!=="dp") parts.push({c:$("imCan"), w:$("imCan").width, h:$("imCan").height, n:S.nx, ov:imOverlayOn});
+  if(native && parts.length===1){ const c=document.createElement("canvas"); c.width=parts[0].w; c.height=parts[0].h; c.getContext("2d").drawImage(parts[0].c,0,0); return c; }
+  const target=1000, gap=parts.length>1?24:0;
+  for(const p of parts){ p.s=Math.max(1,Math.round(target/Math.max(p.w,p.h))); p.W=p.w*p.s; p.H=p.h*p.s; }
+  const W=parts.reduce((a,p)=>a+p.W,0)+gap*(parts.length-1), H=Math.max(...parts.map(p=>p.H));
+  const c=document.createElement("canvas"); c.width=W; c.height=H; const ctx=c.getContext("2d");
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,H); ctx.imageSmoothingEnabled=false;
+  let x=0; for(const p of parts){ const y=Math.round((H-p.H)/2); ctx.imageSmoothingEnabled=p.c.classList.contains("smooth"); ctx.imageSmoothingQuality="high"; ctx.drawImage(p.c,x,y,p.W,p.H); ctx.imageSmoothingEnabled=false;
+    if(overlay){ ctx.save(); ctx.beginPath(); ctx.rect(x,y,p.W,p.H); ctx.clip(); ctx.translate(x,y); p.ov(ctx,p.W/p.n,Math.max(1.5,target/450)); ctx.restore(); }
+    x+=p.W+gap; }
+  return c;
+}
+const toBlob=(c)=>new Promise(r=>c.toBlob(r,"image/png"));
+async function deflate(u8){ const out=await new Response(new Blob([u8]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer(); return new Uint8Array(out); }
+async function makePDF(canvas, captions){
+  const w=canvas.width, h=canvas.height, px=canvas.getContext("2d").getImageData(0,0,w,h).data, rgb=new Uint8Array(w*h*3);
+  for(let i=0,j=0;i<px.length;i+=4){ rgb[j++]=px[i]; rgb[j++]=px[i+1]; rgb[j++]=px[i+2]; }
+  const img=await deflate(rgb);
+  const margin=36, maxW=540, sc=Math.min(maxW/w, 600/h), iw=w*sc, ih=h*sc, lineH=12, capH=captions.length*lineH+10;
+  const PW=Math.max(iw+2*margin, 612), PH=ih+2*margin+capH;
+  const esc=t=>t.replace(/[^\x20-\x7e]/g,"").replace(/([\\()])/g,"\\$1");
+  let content=`q ${iw.toFixed(2)} 0 0 ${ih.toFixed(2)} ${((PW-iw)/2).toFixed(2)} ${(PH-margin-ih).toFixed(2)} cm /Im0 Do Q\nBT /F1 9 Tf 0.15 0.15 0.15 rg\n`;
+  captions.forEach((t,i)=>{ content+=`1 0 0 1 ${((PW-iw)/2).toFixed(2)} ${(PH-margin-ih-14-i*lineH).toFixed(2)} Tm (${esc(t)}) Tj\n`; });
+  content+="ET\n";
+  const enc=new TextEncoder(), chunks=[], offs=[]; let len=0;
+  const push=x=>{ const b=typeof x==="string"?enc.encode(x):x; chunks.push(b); len+=b.length; };
+  push("%PDF-1.4\n%\xe2\xe3\xcf\xd3\n");
+  const obj=(n,body,stream)=>{ offs[n]=len; push(`${n} 0 obj\n${body}\n`); if(stream){ push("stream\n"); push(stream); push("\nendstream\n"); } push("endobj\n"); };
+  obj(1,"<< /Type /Catalog /Pages 2 0 R >>");
+  obj(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  obj(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW.toFixed(2)} ${PH.toFixed(2)}] /Resources << /XObject << /Im0 4 0 R >> /Font << /F1 6 0 R >> >> /Contents 5 0 R >>`);
+  obj(4,`<< /Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Interpolate false /Filter /FlateDecode /Length ${img.length} >>`, img);
+  const cb=enc.encode(content); obj(5,`<< /Length ${cb.length} >>`, cb);
+  obj(6,"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const xref=len; let x=`xref\n0 7\n0000000000 65535 f \n`; for(let i=1;i<=6;i++) x+=String(offs[i]).padStart(10,"0")+" 00000 n \n";
+  push(x+`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(chunks,{type:"application/pdf"});
+}
+function csvOf(arr,w,h){ const lines=[]; for(let y=0;y<h;y++){ const r=new Array(w); for(let x=0;x<w;x++) r[x]=+arr[y*w+x].toPrecision(7); lines.push(r.join(",")); } return lines.join("\n")+"\n"; }
+async function deliver(blob, filename, previewCanvas){
+  if(DL){
+    try{ await DL.save({filename, data:blob}); $("status").textContent=`Saved ${filename}`; return; }
+    catch(e){ if(e && e.code==="declined") return; if(e && e.code==="rate_limited"){ $("status").textContent="A save prompt is already open."; return; } }
+  }
+  // fallback (no download capability in this view): preview with a link
+  const url=URL.createObjectURL(blob);
+  modal(`<h3>${filename}</h3>${previewCanvas?`<img src="${url}" style="max-width:100%;image-rendering:pixelated;background:#fff">`:""}
+    <div class="hint">Saving directly isn't available in this view. Use the link below${previewCanvas?", or right-click / long-press the image":""}.</div>
+    <div class="actions"><a class="btn" href="${url}" download="${filename}">Download ${filename}</a><button onclick="closeModal()">Close</button></div>`);
+}
+function openSave(){
+  if(!S.data) return;
+  modal(`<h3>Save</h3>
+    <div class="grid">
+      <label>Content</label><select id="sWhich"><option value="both">Both panels side by side</option><option value="im">Virtual image</option><option value="dp">Diffraction pattern</option><option value="ps">Power spectrum of virtual image</option></select>
+      <label>Format</label><select id="sFmt"><option value="png">PNG image</option><option value="pdf">PDF (image + acquisition caption)</option><option value="csv">CSV (raw values, one panel)</option></select>
+      <label>Overlay</label><label><input type="checkbox" id="sOv" checked> Draw detector and probe marker</label>
+      <label>Size</label><select id="sSize"><option value="up">Upscaled to ~1000 px (pixels or smooth, as displayed)</option><option value="native">Native pixels (1 px per pixel, no overlay)</option></select>
+    </div><div class="hint" id="sHint"></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="sGo">Save</button></div>`);
+  const sync=()=>{ const f=$("sFmt").value, csv=f==="csv";
+    if(csv && $("sWhich").value==="both") $("sWhich").value="im";
+    $("sOv").disabled=csv||$("sSize").value==="native"; $("sSize").disabled=csv||f==="pdf"||$("sWhich").value==="both";
+    $("sHint").textContent = csv? "CSV holds the displayed values before contrast/colormap: the virtual image (scan rows × cols) or the current pattern (k rows × cols)." : f==="pdf" ? "The PDF caption records the file, detector geometry, signal and probe position." : ""; };
+  ["sFmt","sWhich","sSize"].forEach(id=>$(id).addEventListener("change",sync)); sync();
+  $("sGo").onclick=async()=>{
+    const which=$("sWhich").value, fmt=$("sFmt").value, native=!$("sSize").disabled && $("sSize").value==="native", ov=!native && $("sOv").checked;
+    const tag = which==="both"?"dp+vimg":which==="im"?"vimg":which==="ps"?"vimg_fft":"dp", base=`${stem()}_${tag}`;
+    closeModal();
+    try{
+      if(fmt==="csv"){ const blob = which==="dp" ? new Blob([csvOf(S.dpBuf,S.kx,S.ky)]) : which==="ps" ? (S.ps||drawPS(), new Blob([csvOf(S.ps.arr,S.ps.n,S.ps.n)])) : new Blob([csvOf(S.img,S.imgW,S.imgH)]); await deliver(blob, base+".csv"); return; }
+      const c=composite(which, ov, native);
+      if(fmt==="png") await deliver(await toBlob(c), base+".png", c);
+      else { const caps=[S.name, `Scan ${S.ny} x ${S.nx} (rows x cols), pattern ${S.ky} x ${S.kx}`, detLabel(), posLabel(), `Panels: ${which==="both"?"diffraction pattern (left), virtual image (right)":which==="im"?"virtual image":which==="ps"?"log10 power spectrum of virtual image (Hann window)":"diffraction pattern"}`];
+        await deliver(await makePDF(c,caps), base+".pdf"); }
+    }catch(e){ showError(e); }
+  };
+}
+$("saveBtn").addEventListener("click",openSave); $("saveBtn2").addEventListener("click",openSave);
+</script>
+</body>
+</html>
