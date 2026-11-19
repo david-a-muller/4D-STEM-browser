@@ -70,7 +70,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     <option value="ws2">WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
     <option value="ws2b">WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
     <option value="ws2tc">WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
-    <option value="atoms">Two W atoms: one at focus, one 20 nm below (80 kV, 21.4 mrad)</option>
+    <option value="atoms">Two W atoms: one at focus, one 20 nm below (noise-free, 80 kV, 21.4 mrad)</option>
     <option value="grains">Polycrystal + particle (separated disks)</option>
   </select>
   <button id="saveBtn" disabled>Save image…</button>
@@ -1106,11 +1106,11 @@ async function demoAtoms(){
       for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
       fft(er,ei,false);
       const bo=(sy*nS+sx)*K;
-      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y+h)%N)*N+((x+h)%N); data[bo+y*N+x]=poisson((er[q]*er[q]+ei[q]*ei[q])/K*dose); }
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y+h)%N)*N+((x+h)%N); data[bo+y*N+x]=(er[q]*er[q]+ei[q]*ei[q])/K*dose; /* noise-free (expected counts) */ }
     }
     if((sy&3)===3){ busy(`Simulating two single atoms… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
-  await setData(data,nS,nS,N,N,"Two W atoms: A (upper left) at focus, B (lower right) 20 nm below (80 kV, 21.4 mrad, 0.4 A step, 5e5 e per pattern)");
+  await setData(data,nS,nS,N,N,"Two W atoms: A (upper left) at focus, B (lower right) 20 nm below (80 kV, 21.4 mrad, 0.4 A step, noise-free)");
   S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:dx}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=dx; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=21.4;
   const r0=kmax/dk; Object.assign(S.det,{shape:"annulus", cx:N/2, cy:N/2, r:+(0.92*r0).toFixed(1), ri:+(r0+1).toFixed(1), ro:+Math.min(2.1*r0, N/2-1).toFixed(1)});
   $("signal").value="sum"; $("signal").dispatchEvent(new Event("change"));
