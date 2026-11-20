@@ -48,6 +48,7 @@ Because data is held in browser memory, files up to roughly 1–2 GB are practic
 Simulated data sets can be loaded from the **Load demo data** menu:
 
 - **WS₂ monolayer**, 80 kV: at 21.4 mrad (ptychography conditions), at 11 mrad (a lattice of partially overlapping disks), and at 21.4 mrad with 20 nm underfocus (for tcBF and ACBF). W and S vacancies are included.
+- **WSe₂ monolayer, in focus, noise-free**, 80 kV, 12 mrad, 0.1 Å scan step over about two unit cells. Click around the virtual image to watch the overlap regions between the central and first-order disks change intensity with probe position.
 - **Single W atom**, noise-free, with the probe 200 Å underfocus. Try tcBF, ACBF and the Δf fit.
 - **Two single W atoms**, noise-free: one in the focal plane and one 20 nm below it. This shows depth sectioning with tcBF and ACBF.
 - **Polycrystal**: two grains rotated 30° in plane, a vacuum hole, and an amorphous inclusion with an electrostatic field around it.
