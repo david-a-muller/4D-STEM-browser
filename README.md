@@ -9,7 +9,9 @@ A lightweight viewer for exploring 4D-STEM data sets. It's mainly intended for m
 The window has two panels:
 
 - **Diffraction pattern** (left) shows the pattern at the selected probe position, or the mean or max pattern over the scan. A detector drawn on it can be a **point, circle, annulus or rectangle**. Drag the detector to move it and drag its edge to resize it.
-- **Virtual image** (right) is the image formed by that detector. Click or drag in it to choose the probe position, or draw a rectangle to average patterns over a region. The arrow keys step the probe.
+- **Virtual image** (right) is the image formed by that detector. Click or drag in it to choose the probe position, or draw a rectangle to average patterns over a region.
+
+Keyboard: **W A S D** nudge the detector by one pixel, and **I J K L** (or the arrow keys) move the probe, or the averaging box in Rectangle mode. Hold **Shift** to move 5 pixels per press.
 
 ### Imaging modes
 
