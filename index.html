@@ -31,7 +31,7 @@ main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 16px}
 .readout{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .viewwrap{display:flex;justify-content:center;align-items:stretch;gap:6px}
 .hist{flex:0 0 40px;display:flex;flex-direction:column;align-items:center;min-height:0}
-.hist canvas{flex:1 1 auto;width:28px;min-height:0}
+.hist canvas{flex:1 1 auto;width:28px;min-height:0;touch-action:none;cursor:pointer}
 .hlab{font-size:10px;line-height:14px;height:14px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;text-align:center;width:40px;overflow:visible;display:flex;justify-content:center}
 .view{position:relative;flex:0 1 auto;width:100%;aspect-ratio:var(--ar,1);max-width:calc(62vh * var(--ar,1));background:#000;touch-action:none;user-select:none}
 .view canvas{position:absolute;inset:0;width:100%;height:100%}
@@ -76,6 +76,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     <option value="ws2b">WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
     <option value="ws2tc">WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
     <option value="wse2">WSe₂ monolayer, in focus, 0.1 Å step, 12 mrad (disk-overlap interference, noise-free)</option>
+    <option value="wse2df">WSe₂ monolayer, 50 nm underfocus, 21.4 mrad (Ronchigram shadow image, noise-free)</option>
     <option value="atom1">Single W atom, 200 Å underfocus (noise-free, 80 kV, 21.4 mrad)</option>
     <option value="atoms">Two W atoms: one at focus, one 20 nm below (noise-free, 80 kV, 21.4 mrad)</option>
     <option value="grains">Polycrystal + particle (separated disks)</option>
@@ -107,18 +108,19 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
         <span class="pair"><span>rot (°)</span><input type="number" id="tcRot" value="0" step="1" title="Rotation of detector axes relative to scan axes"></span>
         <label class="pair"><input type="checkbox" id="tcFlip"><span>flip</span></label>
         <span class="pair"><span>mrad/px</span><input type="number" id="tcMr" value="1" step="0.01" title="Detector angular pixel size"></span>
+        <span class="pair"><span>Aperture α (mrad)</span><input type="number" id="acAl" value="" step="0.1" min="0" title="Probe convergence semi-angle. Setting it calibrates mrad/px = α ÷ the measured bright-field disk radius"></span>
+        <span class="readout" id="bfR" title="Bright-field disk radius measured from the mean pattern (50% threshold)"></span>
         <span class="pair"><span>step (Å)</span><input type="number" id="tcSt" value="1" step="0.01" title="Scan step size"></span>
         <span class="pair"><span>Beam Energy (kV)</span><input type="number" id="acKV" value="300" step="10" title="Accelerating voltage, used for the electron wavelength"></span>
         <span class="pair tconly"><span>upsample</span><select id="tcUp" title="tcBF output grid relative to the scan; the result is always band-limited to 2α/λ"><option>1</option><option selected>2</option><option>4</option></select></span>
         <button class="tconly" id="tcFit" title="Cross-correlate the bright-field pixel images and solve for defocus and rotation">Fit Δf &amp; rotation</button>
+        <button class="tconly" id="acRef" title="Find the defocus that makes the ACBF reconstruction sharpest (it corrects the full CTF, so unlike the shift fit it is not biased by crystal periodicity), and use it for tcBF and ACBF. Needs Aperture α, step and beam energy">Refine Δf</button>
         <span class="readout" id="tcInfo"></span>
       </div>
       <label class="k acrow" hidden>ACBF</label>
       <div class="row acrow geo" hidden>
         <span class="pair"><span>Cs (mm)</span><input type="number" id="acCs" value="0" step="0.001" title="Spherical aberration (0 for a corrected probe)"></span>
-        <span class="pair"><span>α (mrad)</span><input type="number" id="acAl" value="" step="0.1" title="Probe convergence semi-angle; blank = BF disk radius × mrad/px"></span>
         <span class="pair"><span>ε</span><input type="number" id="acEps" value="0.02" step="0.01" min="0" title="Wiener regularisation, relative to the peak of Σ|T|²"></span>
-        <button id="acRef" title="Search Δf around its current value for the maximum ACBF image contrast (the correct defocus removes the residual CTF and gives the sharpest phase image)">Refine Δf</button>
         <span class="readout" id="acInfo"></span>
       </div>
       <label class="k idrow" hidden>iDPC</label>
@@ -134,7 +136,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
         <div class="seg" id="dpInterp" title="Pixel display"><button data-v="sharp" class="on">Pixels</button><button data-v="smooth">Smooth</button></div>
       </div>
       <label class="k">Contrast</label>
-      <div class="row"><input type="range" id="dpLo" min="0" max="89" step="0.1" value="0" title="Lower contrast limit (percentile of pixels). Raise it to stretch only the bright-field disk"><input type="range" id="dpHi" min="90" max="100" step="0.05" value="99.9"><span class="readout" id="dpCl"></span></div>
+      <div class="row"><input type="range" id="dpLo" min="0" max="100" step="0.1" value="0" title="Lower contrast limit (percentile of pixels). Raise it to stretch only the bright-field disk"><input type="range" id="dpHi" min="0" max="100" step="0.05" value="99.9"><span class="readout" id="dpCl"></span></div>
     </div>
   </section>
 
@@ -148,7 +150,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
       <label class="k">Display</label>
       <div class="row"><select id="imCmap"></select><label class="k"><input type="checkbox" id="psOn"> Power spectrum</label><div class="seg" id="imInterp" title="Pixel display"><button data-v="sharp" class="on">Pixels</button><button data-v="smooth">Smooth</button></div></div>
       <label class="k">Contrast</label>
-      <div class="row"><input type="range" id="imLo" min="0" max="20" step="0.1" value="0.5"><input type="range" id="imHi" min="80" max="100" step="0.05" value="99.5"><span class="readout" id="imCl"></span></div>
+      <div class="row"><input type="range" id="imLo" min="0" max="100" step="0.1" value="0.5"><input type="range" id="imHi" min="0" max="100" step="0.05" value="99.5"><span class="readout" id="imCl"></span></div>
       <label class="k">Export</label>
       <div class="row"><button id="saveBtn2">Save PNG / PDF / CSV…</button><button id="snip">Copy detector as NumPy code</button></div>
     </div>
@@ -176,6 +178,7 @@ const $ = id => document.getElementById(id);
 // ---------------------------------------------------------------- colormaps
 const CM_ANCH = {
   gray:["#000000","#ffffff"],
+  "gray (inverted)":["#ffffff","#000000"],
   inferno:["#000004","#1b0c41","#4a0c6b","#781c6d","#a52c60","#cf4446","#ed6925","#fb9b06","#f7d13d","#fcffa4"],
   viridis:["#440154","#482878","#3e4989","#31688e","#26828e","#1f9e89","#35b779","#6ece58","#b5de2b","#fde725"],
   magma:["#000004","#180f3d","#440f76","#721f81","#9e2f7f","#cd4071","#f1605d","#fd9668","#feca8d","#fcfdbf"],
@@ -206,7 +209,8 @@ function percentiles(arr, lo, hi){
   for(let i=0;i<n;i+=step){const v=arr[i]; if(Number.isFinite(v)) tmp[j++]=v;}
   if(!j) return [0,1];
   const s=tmp.subarray(0,j).sort();
-  return [s[Math.floor(lo/100*(j-1))], s[Math.floor(hi/100*(j-1))]];
+  if(hi<lo){ const t=lo; lo=hi; hi=t; }
+  return [s[Math.floor(lo/100*(j-1))], s[Math.floor(hi/100*(j-1))], s.subarray(0,j)];
 }
 function render(canvas, T, w, h, lo, hi, lut){
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
@@ -235,7 +239,7 @@ async function setData(arr, ny, nx, ky, kx, name){
   const meanF=new Float32Array(K); for(let k=0;k<K;k++) meanF[k]=mean[k]/N;
   S.totals=totals; S.meanDP=meanF; S.maxDP=mx;
   let gm=0; for(let k=0;k<K;k++) if(mx[k]>gm) gm=mx[k]; S.gmax=gm>0?gm:1;
-  S.vimg=new Float32Array(N); S.img=S.vimg; S.imgW=nx; S.imgH=ny; S.imgUp=1; S.calib=null; S.dpBuf=new Float32Array(K); S.dpT=new Float32Array(K); S.imT=new Float32Array(N);
+  S.vimg=new Float32Array(N); S.img=S.vimg; S.imgW=nx; S.imgH=ny; S.imgUp=1; if(S.calib){ $("tcMr").value=1; $("tcSt").value=1; $("acAl").value=""; } S.calib=null; S.dpBuf=new Float32Array(K); S.dpT=new Float32Array(K); S.imT=new Float32Array(N);
   autoDetector();
   S.probe={x:nx>>1, y:ny>>1}; S.rsRect=null;
   $("dpView").style.setProperty("--ar", kx/ky); $("imView").style.setProperty("--ar", nx/ny);
@@ -259,7 +263,16 @@ function autoDetector(){
   const edge=Math.min(cx,cy,kx-1-cx,ky-1-cy);
   const d=S.det; d.cx=+cx.toFixed(1); d.cy=+cy.toFixed(1); d.r=+r.toFixed(1);
   d.ri=+Math.min(1.3*r+1, edge*0.6).toFixed(1); d.ro=+Math.max(d.ri+1, Math.min(3.5*r, edge)).toFixed(1);
-  S.bf={cx,cy,r};
+  // refine the radius from the edge: azimuthal profile (¼-px bins) crosses halfway between the disk plateau and the background
+  { const r0=r, bw=0.25, nb=Math.ceil(Math.min(kx,ky)/bw), sum=new Float64Array(nb), n=new Float64Array(nb);
+    for(let y=0;y<ky;y++) for(let x=0;x<kx;x++){ const b=Math.floor(Math.hypot(x-cx,y-cy)/bw); if(b<nb){ sum[b]+=m[y*kx+x]; n[b]++; } }
+    const prof=i=>n[i]? sum[i]/n[i] : NaN, avg=(ra,rb)=>{ let s=0,c=0; for(let i=Math.floor(ra/bw); i<Math.min(nb,Math.ceil(rb/bw)); i++) if(n[i]){ s+=sum[i]; c+=n[i]; } return c? s/c : NaN; };
+    const plat=avg(0,0.6*r0), bg=avg(1.35*r0,1.7*r0), half=(plat+(Number.isFinite(bg)?bg:0))/2;
+    if(Number.isFinite(plat) && r0>2){ let prev=null;
+      for(let i=Math.floor(0.5*r0/bw); i<Math.min(nb,Math.ceil(1.5*r0/bw)); i++){ const v=prof(i); if(!Number.isFinite(v)) continue;
+        if(prev && prev[1]>=half && v<half){ const rr=(prev[0]+(prev[1]-half)/(prev[1]-v)*((i+0.5)*bw-prev[0])); if(rr>0.6*r0 && rr<1.4*r0) r=rr; break; }
+        prev=[(i+0.5)*bw, v]; } } }
+  S.bf={cx,cy,r}; $("bfR").textContent=`BF disk r = ${r.toFixed(1)} px`;
   d.x0=+(cx-r).toFixed(1); d.x1=+(cx+r).toFixed(1); d.y0=+(cy-r).toFixed(1); d.y1=+(cy+r).toFixed(1);
 }
 
@@ -332,19 +345,19 @@ function drawDP(){
   if(sc==="log") for(let k=0;k<K;k++){ const v=a[k]; T[k]=Math.log1p((v>0?v:0)/s); }
   else if(sc==="sqrt") for(let k=0;k<K;k++){ const v=a[k]; T[k]=Math.sqrt(v>0?v:0); }
   else T.set(a);
-  const [lo,hi]=percentiles(T,+$("dpLo").value,+$("dpHi").value);
+  const [lo,hi,srt]=percentiles(T,+$("dpLo").value,+$("dpHi").value);
   $("dpCl").textContent=`${(+$("dpLo").value).toFixed(1)}–${(+$("dpHi").value).toFixed(2)}%`;
   render($("dpCan"),T,kx,ky,lo,hi,LUT[$("dpCmap").value]);
-  { let rmn=Infinity, rmx=-Infinity; for(let k=0;k<K;k++){ const v=a[k]; if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.dp={T, lo, hi, lut:LUT[$("dpCmap").value], rmn, rmx}; drawHist("dp"); }
+  { let rmn=Infinity, rmx=-Infinity; for(let k=0;k<K;k++){ const v=a[k]; if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.dp={T, srt, lo, hi, lut:LUT[$("dpCmap").value], rmn, rmx}; drawHist("dp"); }
 }
 function drawIm(){
   const {img:vimg, imgW:nx, imgH:ny}=S;
-  const [lo0,hi0]=percentiles(vimg,+$("imLo").value,+$("imHi").value); let lo=lo0, hi=hi0;
+  const [lo0,hi0,srt]=percentiles(vimg,+$("imLo").value,+$("imHi").value); let lo=lo0, hi=hi0;
   const sig=$("signal").value;
   if((sig==="comx"||sig==="comy") && $("imCmap").value.startsWith("RdBu")){ const m=Math.max(Math.abs(lo),Math.abs(hi)); lo=-m; hi=m; }
   $("imCl").textContent=`${(+$("imLo").value).toFixed(1)}–${(+$("imHi").value).toFixed(2)}%`;
   render($("imCan"),vimg,nx,ny,lo,hi,LUT[$("imCmap").value]);
-  { let rmn=Infinity, rmx=-Infinity; for(const v of vimg) if(Number.isFinite(v)){ if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.im={T:vimg, lo, hi, lut:LUT[$("imCmap").value], rmn, rmx}; drawHist("im"); }
+  { let rmn=Infinity, rmx=-Infinity; for(const v of vimg) if(Number.isFinite(v)){ if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.im={T:vimg, srt, lo, hi, lut:LUT[$("imCmap").value], rmn, rmx}; drawHist("im"); }
   if($("psOn").checked) drawPS();
 }
 // power spectrum of the displayed virtual image: mean-filled NaNs, 2D Hann window, zero-padded to a power of 2
@@ -363,6 +376,10 @@ function drawPS(){
   ps[H*Pn+H]=ps[H*Pn+H+1]; // hide the DC term
   let [lo,hi]=percentiles(ps,40,99.95); lo=Math.max(lo,hi-5); S.ps={arr:ps, n:Pn, w, h}; // ≤5 decades shown
   render($("psCan"),ps,Pn,Pn,lo,hi,LUT["inferno"]);
+  // mark the bright-field information limit 2α/λ for tcBF / ACBF
+  const sig=$("signal").value, al=parseFloat($("acAl").value);
+  if((sig==="tcbf"||sig==="acbf") && al>0){ const V=(+$("acKV").value||300)*1e3, lam=12.2643/Math.sqrt(V*(1+0.97848e-6*V)), gc=2*al*1e-3/lam, pix=(+$("tcSt").value||1)/(S.imgUp||1), rad=gc*pix*Pn;
+    if(rad<Pn*0.75){ const ctx=$("psCan").getContext("2d"); ctx.save(); ctx.strokeStyle="rgba(79,179,255,0.9)"; ctx.lineWidth=Math.max(1,Pn/256); ctx.setLineDash([Pn/40,Pn/60]); ctx.beginPath(); ctx.arc(Pn/2,Pn/2,rad,0,2*Math.PI); ctx.stroke(); ctx.restore(); } }
 }
 $("psOn").addEventListener("change",()=>{ $("psCan").hidden=!$("psOn").checked; if(S.data) drawIm(); });
 { const corners=["","bl","br","tl"]; let ci=0;
@@ -436,7 +453,7 @@ function drawHist(pfx){
   const nb=Math.max(16,Math.min(160,Math.round(H/2))), cnt=new Float64Array(nb);
   for(const v of T) if(Number.isFinite(v)) cnt[Math.min(nb-1,Math.floor((v-mn)/(mx-mn)*nb))]++;
   let cm=0; for(let i=0;i<nb;i++){ cnt[i]=Math.log1p(cnt[i]); if(cnt[i]>cm) cm=cnt[i]; }
-  const cbW=Math.round(6*dpr), x0=cbW+Math.round(2*dpr), bw=W-x0, yOf=v=>H-(v-mn)/(mx-mn)*H;
+  const cbW=Math.round(6*dpr), x0=cbW+Math.round(2*dpr), bw=W-x0, yOf=v=>H-(v-mn)/(mx-mn)*H; h.mn=mn; h.mx=mx;
   // colour bar: the colour each value is displayed with
   for(let y=0;y<H;y++){ const v=mn+(H-y-0.5)/H*(mx-mn); let t=h.hi>h.lo? (v-h.lo)/(h.hi-h.lo) : 0.5; t=t<0?0:t>1?1:t; const i=Math.round(t*255)*3;
     ctx.fillStyle=`rgb(${h.lut[i]},${h.lut[i+1]},${h.lut[i+2]})`; ctx.fillRect(0,y,cbW,1); }
@@ -447,6 +464,20 @@ function drawHist(pfx){
   ctx.fillStyle="#4fb3ff"; for(const v of [h.lo,h.hi]){ if(v<mn||v>mx) continue; const y=Math.round(yOf(v)); ctx.fillRect(0,Math.min(H-1,Math.max(0,y-Math.round(dpr/2))),W,Math.max(1,Math.round(dpr))); }
 }
 new ResizeObserver(()=>{ drawHist("dp"); drawHist("im"); }).observe($("dpHist").parentElement);
+// drag the contrast lines: the value under the pointer → its percentile in the data → the matching slider
+for(const pfx of ["dp","im"]){
+  const c=$(pfx+"Hist"), lo=$(pfx+"Lo"), hi=$(pfx+"Hi"); let drag=null;
+  const valAt=e=>{ const h=HIST[pfx], r=c.getBoundingClientRect(); return h.mn+(1-(e.clientY-r.top)/r.height)*(h.mx-h.mn); };
+  const yOfV=v=>{ const h=HIST[pfx], r=c.getBoundingClientRect(); return r.top+(1-(v-h.mn)/(h.mx-h.mn))*r.height; };
+  const pctOf=v=>{ const s=HIST[pfx].srt; let a=0,b=s.length; while(a<b){ const m=(a+b)>>1; if(s[m]<v) a=m+1; else b=m; } return 100*a/Math.max(1,s.length-1); };
+  const nearest=e=>{ const h=HIST[pfx]; const dl=Math.abs(e.clientY-yOfV(h.lo)), dh=Math.abs(e.clientY-yOfV(h.hi)); return {which: dl<dh? "lo":"hi", d:Math.min(dl,dh)}; };
+  const apply=e=>{ const p=Math.max(0,Math.min(100,pctOf(valAt(e))));
+    if(drag==="lo") lo.value=Math.max(0,Math.min(p, +hi.value-0.2)); else hi.value=Math.min(100,Math.max(p, +lo.value+0.2));
+    if(pfx==="dp") update(false,true); else drawIm(); };
+  c.addEventListener("pointerdown",e=>{ if(!HIST[pfx]||!(HIST[pfx].mx>HIST[pfx].mn)) return; drag=nearest(e).which; c.setPointerCapture(e.pointerId); e.preventDefault(); apply(e); });
+  c.addEventListener("pointermove",e=>{ if(!HIST[pfx]||!(HIST[pfx].mx>HIST[pfx].mn)) return; if(drag) apply(e); else c.style.cursor= nearest(e).d<8? "ns-resize" : "pointer"; });
+  const end=()=>{ drag=null; }; c.addEventListener("pointerup",end); c.addEventListener("pointercancel",end);
+}
 
 // ---------------------------------------------------------------- update loop (rAF-coalesced)
 let pend={v:false,d:false}, raf=0;
@@ -460,7 +491,7 @@ function doUpdate(){
   drawDPOverlay(); drawImOverlay(); syncInputs();
   const pos = S.rsMode==="rect"&&S.rsRect ? `avg of ${S.rsCount||0} positions` : `probe (${S.probe.x}, ${S.probe.y})`;
   $("status").textContent = `Detector: ${S.maskCount??0} pixels · ${pos}` + (tv? ` · virtual image computed in ${tv.toFixed(0)} ms` : "")
-  if($("signal").value==="tcbf" && S.tcUncal) $("status").textContent += " · set mrad/px and step in Optics to band-limit tcBF at 2α";
+  if($("signal").value==="tcbf" && S.tcUncal) $("status").textContent += " · enter Aperture α (and step, beam energy) in Optics to band-limit tcBF at 2α";
 }
 
 // ---------------------------------------------------------------- geometry inputs
@@ -813,7 +844,7 @@ async function rawDialog(f){
 // ---------------------------------------------------------------- synthetic demo
 $("demoSel").addEventListener("change",async()=>{
   const v=$("demoSel").value; $("demoSel").value="";
-  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="atom1") await demoAtoms(true); else if(v==="wse2") await demoWSe2(); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
+  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="atom1") await demoAtoms(true); else if(v==="wse2") await demoWSe2(); else if(v==="wse2df") await demoWSe2(500, 21.4); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
 });
 async function demoGrains(){
   busy("Generating demo dataset…"); await tick();
@@ -878,7 +909,8 @@ function computeTCBF(){
   let wmax=0; for(let i=0;i<W*H;i++) if(wt[i]>wmax) wmax=wt[i];
   const out=new Float32Array(W*H); for(let i=0;i<W*H;i++) out[i]= wt[i]>0.05*wmax ? acc[i]/wt[i] : NaN;
   // always band-limit to 2α/λ (BF carries nothing beyond it); needs a real calibration, so skip while mrad/px and step are both at their defaults
-  S.tcUncal = (P.mr===1 && P.st===1);
+  // the cutoff is set by the probe aperture: 2α/λ, applied whenever Aperture α has been entered
+  S.tcUncal = !(parseFloat($("acAl").value)>0);
   if(!S.tcUncal) bandLimit(out,W,H,P.st/u);
   S.img=out; S.imgW=W; S.imgH=H; S.imgUp=u;
 }
@@ -980,6 +1012,8 @@ $("tcFit").addEventListener("click",()=>fitTCBF().catch(e=>{ busy(); showError(e
 //   T_k(g) = i[ A(k−g) e^{i(χ(k)−χ(k−g))} − A(k+g) e^{−i(χ(k)−χ(k+g))} ],  χ(q) = πλq²(½Csλ²q² − Δf).
 // Combined estimate: φ̂(g) = Σ_k T_k*(g) Î_k(g) / (Σ_k |T_k(g)|² + ε·max Σ|T|²)  — removes both the image shifts
 // (tcBF) and the residual CTF phase, giving a transfer function without zero crossings out to 2α.
+$("acAl").addEventListener("input",()=>{ const a=parseFloat($("acAl").value); if(S.bf && a>0){ $("tcMr").value=+(a/S.bf.r).toFixed(4); } });
+$("tcMr").addEventListener("input",()=>{ const m=parseFloat($("tcMr").value); if(S.bf && m>0 && $("acAl").value!=="") $("acAl").value=+(m*S.bf.r).toFixed(2); });
 function acAlpha(){ const v=parseFloat($("acAl").value); return Number.isFinite(v)&&v>0 ? v : (S.bf? S.bf.r*(+$("tcMr").value||1) : 1); }
 function acbfKey(){ return JSON.stringify([tcParams(), $("acKV").value, $("acCs").value, acAlpha(), $("acEps").value, S.det.shape, S.det.cx, S.det.cy, S.det.r, S.det.ri, S.det.ro, S.det.x0, S.det.x1, S.det.y0, S.det.y1, S.name, S.dataId]); }
 let acbfJob=0, acbfTimer=0;
@@ -1047,7 +1081,7 @@ async function refineACBF(){
   for(let it=0; it<4; it++){ busy(`Refining Δf… ${n+it+1}/${n+4}`); await tick(); if(f1>f2){ b=c2; c2=c1; f2=f1; c1=b-gr*(b-a); f1=await score(c1); } else { a=c1; c1=c2; f1=f2; c2=a+gr*(b-a); f2=await score(c2); } }
   const best=(a+b)/2; busy();
   const edge = bi===0||bi===n-1;
-  $("tcDf").value=+best.toFixed(1); S.acNote=`refined Δf = ${best.toFixed(1)} Å${edge?" (at edge of search: press again)":""}`; $("acInfo").textContent=S.acNote;
+  $("tcDf").value=+best.toFixed(1); S.acNote=`refined Δf = ${best.toFixed(1)} Å${edge?" (at edge of search: press again)":""}`; $("acInfo").textContent=S.acNote; $("tcInfo").textContent=S.acNote;
   update(true,false);
 }
 $("acRef").addEventListener("click",()=>refineACBF().catch(e=>{ busy(); showError(e); }));
@@ -1156,7 +1190,7 @@ async function demoWS2(alphaMrad, dfA=0){
   const fft=makeFFT(N), pr=new Float64Array(N*N), pi=new Float64Array(N*N), dk=1/(N*dx), kmax=alpha/lam;
   for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
     const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k=Math.hypot(fx,fy);
-    const A=Math.min(1,Math.max(0,(kmax-k)/dk+0.5)), chi=-Math.PI*lam*defocus*k*k, /* Kirkland: chi = pi*lam*k^2*(Cs..-df), df>0 underfocus */ sgn=((ix+iy)&1)?-1:1; // sgn shifts probe to window centre
+    const A=Math.sqrt(Math.min(1,Math.max(0,(kmax-k)/dk+0.5))), chi=-Math.PI*lam*defocus*k*k, /* Kirkland: chi = pi*lam*k^2*(Cs..-df), df>0 underfocus */ sgn=((ix+iy)&1)?-1:1; // sgn shifts probe to window centre
     pr[iy*N+ix]=sgn*A*Math.cos(-chi); pi[iy*N+ix]=sgn*A*Math.sin(-chi);
   }
   fft(pr,pi,true);
@@ -1182,11 +1216,11 @@ async function demoWS2(alphaMrad, dfA=0){
 }
 
 // ---------------------------------------------------------------- WSe2, finely sampled scan to watch the disk overlaps change
-async function demoWSe2(){
+async function demoWSe2(dfA=0, alphaMrad=12){
   busy("Simulating WSe₂ (fine scan)…"); await tick();
   // 80 kV, α = 12 mrad, in focus, noise-free. Simulation grid 0.4 Å, 128×128 window → 0.0195 Å⁻¹ (0.82 mrad) per pixel,
   // patterns cropped to the central 72×72 (±29 mrad). Scan step 0.1 Å = ¼ grid pixel: the probe is shifted sub-pixel in Fourier space.
-  const N=128, dx=0.4, sub=4, step=dx/sub, nS=64, lam=0.04176, alpha=0.012, Kc=72, c0=(N-Kc)/2, K=N*N, h=N/2, dose=1e5;
+  const N=128, dx=0.4, sub=4, step=dx/sub, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, Kc= alphaMrad>15? 80 : 72, c0=(N-Kc)/2, K=N*N, h=N/2, dose=1e5;
   const G=Math.ceil(nS/sub)+N+2, phi=new Float32Array(G*G);
   // 1H-WSe2, a = 3.28 Å, unrotated: W at origin, Se2 column at (a1+a2)/3. Peak phases (rad) after blur: W 0.5, one Se 0.28.
   const a=3.28, a1=[a,0], a2=[a/2,a*Math.sqrt(3)/2], sig=0.35, PW=0.5, PSe=0.28;
@@ -1202,7 +1236,7 @@ async function demoWSe2(){
   for(let qy=0;qy<sub;qy++) for(let qx=0;qx<sub;qx++){
     const pr=new Float64Array(K), pi=new Float64Array(K), sxA=qx*step, syA=qy*step;
     for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){ const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k=Math.hypot(fx,fy);
-      const A=Math.min(1,Math.max(0,(kmax-k)/dk+0.5)), sgn=((ix+iy)&1)?-1:1, ph=-2*Math.PI*(fx*sxA+fy*syA);
+      const A=Math.sqrt(Math.min(1,Math.max(0,(kmax-k)/dk+0.5))), sgn=((ix+iy)&1)?-1:1, ph=-2*Math.PI*(fx*sxA+fy*syA)+Math.PI*lam*dfA*k*k; /* shift ramp + defocus: χ = −πλΔf k², ψ = A e^{−iχ} */
       pr[iy*N+ix]=sgn*A*Math.cos(ph); pi[iy*N+ix]=sgn*A*Math.sin(ph); }
     fft(pr,pi,true); let pn=0; for(let i=0;i<K;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<K;i++){ pr[i]/=pn; pi[i]/=pn; }
     probes.push([pr,pi]); }
@@ -1217,13 +1251,16 @@ async function demoWSe2(){
     }
     if((sy&1)===1){ busy(`Simulating WSe₂ (fine scan)… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
-  await setData(data,nS,nS,Kc,Kc,"WSe2 monolayer sim (80 kV, 12 mrad, in focus, 0.1 A step, 6.4 A field, noise-free)");
-  S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:step}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=step; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=12;
+  await setData(data,nS,nS,Kc,Kc,`WSe2 monolayer sim (80 kV, ${alphaMrad} mrad, ${dfA? dfA/10+" nm underfocus" : "in focus"}, 0.1 A step, 6.4 A field, noise-free)`);
+  S.calib={mradPerPx:+(dk*lam*1000).toFixed(4), stepA:step}; $("tcMr").value=S.calib.mradPerPx; $("tcSt").value=step; $("tcDf").value=0; $("tcRot").value=0; $("tcFlip").checked=false; $("acKV").value=80; $("acCs").value=0; $("acAl").value=alphaMrad;
   // annular dark-field navigation image (atom columns); log pattern display so the first-order disks show
   const r0=kmax/dk; Object.assign(S.det,{shape:"annulus", cx:Kc/2, cy:Kc/2, r:+(0.92*r0).toFixed(1), ri:+(r0+1).toFixed(1), ro:+(Kc/2-1).toFixed(1)});
   // linear, with the colour range spread over the bright-field disk (interior starts near the 88th percentile) so the overlap lenses stand out;
   // switch Display to Log and lower the left contrast slider to see the first-order disks outside it
-  $("imLo").value=0; $("imHi").value=100; $("dpScale").value="lin"; $("dpLo").value=88; $("dpHi").value=100; $("dpCmap").value="gray";
+  $("imLo").value=0; $("imHi").value=100; $("dpScale").value="lin"; $("dpHi").value=100; $("dpCmap").value="gray";
+  { const f=Math.PI*(kmax/dk)**2/(Kc*Kc); $("dpLo").value=+Math.max(0,100*(1-f)-1).toFixed(1); } // floor just below the BF disk interior
+  // defocused: the BF disk is a magnified shadow image of the lattice; smooth display reads better
+  $("dpInterp").querySelector(`[data-v="${dfA? "smooth":"sharp"}"]`).click();
   $("signal").value="sum"; $("signal").dispatchEvent(new Event("change"));
   $("detSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x.dataset.v==="annulus")); buildGeoInputs(); update(true,true);
 }
@@ -1241,7 +1278,7 @@ async function demoAtoms(single=false){
   const [aR,aI]= single? mkT(o,o) : mkT(o-4.6,o-3.0), [bR,bI]= single? [null,null] : mkT(o+4.6,o+3.0);   // A upper-left (in focus), B lower-right (20 nm below)
   const fft=makeFFT(N), pr=new Float64Array(K), pi=new Float64Array(K), dk=1/(N*dx), kmax=alpha/lam, qr=new Float64Array(K), qi=new Float64Array(K);
   for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
-    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k2=fx*fx+fy*fy, A=Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5)), sgn=((ix+iy)&1)?-1:1;
+    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k2=fx*fx+fy*fy, A=Math.sqrt(Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5))), sgn=((ix+iy)&1)?-1:1;
     const chiP=-Math.PI*lam*probeDf*k2; pr[iy*N+ix]=sgn*A*Math.cos(-chiP); pi[iy*N+ix]=sgn*A*Math.sin(-chiP);
     const ph=-Math.PI*lam*dz*k2, bl = Math.sqrt(k2) < 0.95/(2*dx) ? 1 : 0; qr[iy*N+ix]=bl*Math.cos(ph)/K; qi[iy*N+ix]=bl*Math.sin(ph)/K; // propagator (÷K for unnormalised inverse FFT)
   }
