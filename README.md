@@ -29,6 +29,7 @@ ACBF here uses the weak-phase-object approximation and corrects only defocus and
 
 ### Display and export
 
+- A narrow intensity histogram beside each view, with a colour bar, the contrast limits marked, and the raw maximum and minimum above and below it.
 - Linear, square-root and log scaling, percentile contrast sliders, several colour maps, and a choice of sharp pixels or smooth interpolation.
 - A **power spectrum** inset for the virtual image. Hovering over it reads out the spatial frequency and d-spacing.
 - **Save** as PNG, as PDF with a caption recording the detector and imaging settings, or as CSV holding the raw values.

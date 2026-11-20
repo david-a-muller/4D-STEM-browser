@@ -29,8 +29,11 @@ main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 16px}
 .ptitle{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
 .ptitle h2{font-size:14px;margin:0;font-weight:600}
 .readout{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.viewwrap{display:flex;justify-content:center}
-.view{position:relative;width:100%;aspect-ratio:var(--ar,1);max-width:calc(62vh * var(--ar,1));background:#000;touch-action:none;user-select:none}
+.viewwrap{display:flex;justify-content:center;align-items:stretch;gap:6px}
+.hist{flex:0 0 40px;display:flex;flex-direction:column;align-items:center;min-height:0}
+.hist canvas{flex:1 1 auto;width:28px;min-height:0}
+.hlab{font-size:10px;line-height:14px;height:14px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums;text-align:center;width:40px;overflow:visible;display:flex;justify-content:center}
+.view{position:relative;flex:0 1 auto;width:100%;aspect-ratio:var(--ar,1);max-width:calc(62vh * var(--ar,1));background:#000;touch-action:none;user-select:none}
 .view canvas{position:absolute;inset:0;width:100%;height:100%}
 .view canvas.base{image-rendering:pixelated}
 .view canvas.base.smooth{image-rendering:auto}
@@ -84,7 +87,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
 <main>
   <section class="panel">
     <div class="ptitle"><h2>Diffraction pattern</h2><span class="readout" id="dpRead"></span></div>
-    <div class="viewwrap"><div class="view" id="dpView"><canvas class="base" id="dpCan"></canvas><canvas id="dpOv"></canvas><div class="empty" id="dpEmpty">No data loaded</div></div></div>
+    <div class="viewwrap"><div class="view" id="dpView"><canvas class="base" id="dpCan"></canvas><canvas id="dpOv"></canvas><div class="empty" id="dpEmpty">No data loaded</div></div><div class="hist" title="Intensity histogram (log counts) in the displayed scale; lines mark the contrast limits; labels are the raw max and min"><div class="hlab" id="dpHmax"></div><canvas id="dpHist"></canvas><div class="hlab" id="dpHmin"></div></div></div>
     <div class="controls">
       <label class="k">Detector</label>
       <div class="row"><div class="seg" id="detSeg">
@@ -137,7 +140,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
 
   <section class="panel">
     <div class="ptitle"><h2>Virtual image</h2><span class="readout" id="imRead"></span></div>
-    <div class="viewwrap"><div class="view" id="imView"><canvas class="base" id="imCan"></canvas><canvas id="imOv"></canvas><canvas id="psCan" class="ps" hidden title="Power spectrum of the virtual image (click to move to another corner)"></canvas><div class="empty" id="imEmpty">Open a file or load the demo</div></div></div>
+    <div class="viewwrap"><div class="view" id="imView"><canvas class="base" id="imCan"></canvas><canvas id="imOv"></canvas><canvas id="psCan" class="ps" hidden title="Power spectrum of the virtual image (click to move to another corner)"></canvas><div class="empty" id="imEmpty">Open a file or load the demo</div></div><div class="hist" title="Histogram of virtual-image values (log counts); lines mark the contrast limits"><div class="hlab" id="imHmax"></div><canvas id="imHist"></canvas><div class="hlab" id="imHmin"></div></div></div>
     <div class="controls">
       <label class="k">Real-space</label>
       <div class="row"><div class="seg" id="rsSeg"><button data-v="point" class="on">Point</button><button data-v="rect">Rectangle (avg)</button></div>
@@ -332,6 +335,7 @@ function drawDP(){
   const [lo,hi]=percentiles(T,+$("dpLo").value,+$("dpHi").value);
   $("dpCl").textContent=`${(+$("dpLo").value).toFixed(1)}–${(+$("dpHi").value).toFixed(2)}%`;
   render($("dpCan"),T,kx,ky,lo,hi,LUT[$("dpCmap").value]);
+  { let rmn=Infinity, rmx=-Infinity; for(let k=0;k<K;k++){ const v=a[k]; if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.dp={T, lo, hi, lut:LUT[$("dpCmap").value], rmn, rmx}; drawHist("dp"); }
 }
 function drawIm(){
   const {img:vimg, imgW:nx, imgH:ny}=S;
@@ -340,6 +344,7 @@ function drawIm(){
   if((sig==="comx"||sig==="comy") && $("imCmap").value.startsWith("RdBu")){ const m=Math.max(Math.abs(lo),Math.abs(hi)); lo=-m; hi=m; }
   $("imCl").textContent=`${(+$("imLo").value).toFixed(1)}–${(+$("imHi").value).toFixed(2)}%`;
   render($("imCan"),vimg,nx,ny,lo,hi,LUT[$("imCmap").value]);
+  { let rmn=Infinity, rmx=-Infinity; for(const v of vimg) if(Number.isFinite(v)){ if(v<rmn) rmn=v; if(v>rmx) rmx=v; } HIST.im={T:vimg, lo, hi, lut:LUT[$("imCmap").value], rmn, rmx}; drawHist("im"); }
   if($("psOn").checked) drawPS();
 }
 // power spectrum of the displayed virtual image: mean-filled NaNs, 2D Hann window, zero-padded to a power of 2
@@ -416,6 +421,32 @@ function resizeOverlays(){
   drawDPOverlay(); drawImOverlay();
 }
 new ResizeObserver(resizeOverlays).observe($("dpView")); new ResizeObserver(resizeOverlays).observe($("imView"));
+// ---------------------------------------------------------------- narrow intensity histograms beside the views
+// value axis vertical (min at the bottom), bar length = log(1+count); a colour bar on the left shows the display mapping
+const HIST={dp:null, im:null};
+function drawHist(pfx){
+  const h=HIST[pfx], c=$(pfx+"Hist"); if(!h||!c) return;
+  const dpr=window.devicePixelRatio||1, r=c.getBoundingClientRect(), W=Math.max(1,Math.round(r.width*dpr)), H=Math.max(1,Math.round(r.height*dpr));
+  if(c.width!==W||c.height!==H){ c.width=W; c.height=H; }
+  const ctx=c.getContext("2d"); ctx.clearRect(0,0,W,H);
+  const T=h.T; let mn=Infinity, mx=-Infinity; for(const v of T) if(Number.isFinite(v)){ if(v<mn) mn=v; if(v>mx) mx=v; }
+  const f3=v=>!Number.isFinite(v)?"–":(v===0?"0":(Math.abs(v)>=1e4||Math.abs(v)<1e-2)? v.toExponential(1).replace("e+","e") : String(+v.toPrecision(3)));
+  $(pfx+"Hmax").textContent=f3(h.rmx); $(pfx+"Hmin").textContent=f3(h.rmn);
+  if(!(mx>mn)) return;
+  const nb=Math.max(16,Math.min(160,Math.round(H/2))), cnt=new Float64Array(nb);
+  for(const v of T) if(Number.isFinite(v)) cnt[Math.min(nb-1,Math.floor((v-mn)/(mx-mn)*nb))]++;
+  let cm=0; for(let i=0;i<nb;i++){ cnt[i]=Math.log1p(cnt[i]); if(cnt[i]>cm) cm=cnt[i]; }
+  const cbW=Math.round(6*dpr), x0=cbW+Math.round(2*dpr), bw=W-x0, yOf=v=>H-(v-mn)/(mx-mn)*H;
+  // colour bar: the colour each value is displayed with
+  for(let y=0;y<H;y++){ const v=mn+(H-y-0.5)/H*(mx-mn); let t=h.hi>h.lo? (v-h.lo)/(h.hi-h.lo) : 0.5; t=t<0?0:t>1?1:t; const i=Math.round(t*255)*3;
+    ctx.fillStyle=`rgb(${h.lut[i]},${h.lut[i+1]},${h.lut[i+2]})`; ctx.fillRect(0,y,cbW,1); }
+  // bars: brighter inside the contrast window
+  for(let i=0;i<nb;i++){ if(!cnt[i]) continue; const v0=mn+i/nb*(mx-mn), v1=mn+(i+1)/nb*(mx-mn), yA=yOf(v1), yB=yOf(v0), inside=v1>h.lo && v0<h.hi;
+    ctx.fillStyle= inside? "rgba(230,232,236,0.85)" : "rgba(154,161,173,0.45)"; ctx.fillRect(x0, yA, Math.max(1,bw*cnt[i]/cm), Math.max(1,yB-yA)); }
+  // contrast limits
+  ctx.fillStyle="#4fb3ff"; for(const v of [h.lo,h.hi]){ if(v<mn||v>mx) continue; const y=Math.round(yOf(v)); ctx.fillRect(0,Math.min(H-1,Math.max(0,y-Math.round(dpr/2))),W,Math.max(1,Math.round(dpr))); }
+}
+new ResizeObserver(()=>{ drawHist("dp"); drawHist("im"); }).observe($("dpHist").parentElement);
 
 // ---------------------------------------------------------------- update loop (rAF-coalesced)
 let pend={v:false,d:false}, raf=0;
