@@ -46,6 +46,7 @@ main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 16px}
 .geo span{color:var(--muted);font-size:12px}
 [hidden]{display:none!important}
 .pair{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.status.keys{padding-top:0;margin-top:-8px}
 .status{padding:0 16px 14px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 #drop{position:fixed;inset:0;background:rgba(15,17,21,.85);border:3px dashed var(--accent);display:none;align-items:center;justify-content:center;font-size:20px;z-index:50}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40;padding:16px}
@@ -150,7 +151,8 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     </div>
   </section>
 </main>
-<div class="status" id="status">Drag the detector to move it; drag its edge to resize. Click or drag in the virtual image to pick the probe position. <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> step the probe (<kbd>Shift</kbd> ×5).</div>
+<div class="status" id="status">Drag the detector to move it; drag its edge to resize. Click or drag in the virtual image to pick the probe position.</div>
+<div class="status keys">Keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> nudge the detector · <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> or arrows move the probe (or the averaging box) · one pixel per press, <kbd>Shift</kbd> ×5</div>
 
 <div id="drop">Drop a 4D-STEM file</div>
 <div id="busy"></div>
@@ -524,13 +526,36 @@ $("imView").addEventListener("pointermove",e=>{
 });
 const endIm=()=>{ imDrag=null; }; $("imView").addEventListener("pointerup",endIm); $("imView").addEventListener("pointercancel",endIm);
 $("imView").addEventListener("pointerleave",()=>{ if(!imDrag) $("imRead").textContent=""; });
+// Keyboard: W A S D nudge the detector in the diffraction pattern; I J K L (or the arrow keys) move the probe,
+// or the averaging box in Rectangle mode. One pixel per press, Shift ×5.
+// Captured before menus, buttons and checkboxes see the key (otherwise a focused menu jumps to an option starting
+// with that letter). Only boxes you type into keep their keys; sliders keep the arrow keys.
 window.addEventListener("keydown",e=>{
-  if(!S.data || /INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName||"")) return;
-  const st=e.shiftKey?5:1, m={ArrowLeft:[-st,0],ArrowRight:[st,0],ArrowUp:[0,-st],ArrowDown:[0,st]}[e.key];
-  if(!m) return; e.preventDefault();
-  if(S.rsMode==="rect"){ $("rsSeg").querySelector('[data-v="point"]').click(); }
-  setProbe(S.probe.x+m[0], S.probe.y+m[1]);
-});
+  if(!S.data || e.ctrlKey || e.metaKey || e.altKey || $("modal").style.display==="flex") return;
+  const ae=document.activeElement, tag=ae?.tagName||"", type=(ae?.type||"").toLowerCase();
+  if(tag==="TEXTAREA" || (tag==="INPUT" && !["checkbox","radio","range","button"].includes(type)) || ae?.isContentEditable) return;
+  const st=e.shiftKey?5:1, k=e.key.length===1? e.key.toLowerCase() : e.key, arrow=k.startsWith("Arrow");
+  if(arrow && tag==="INPUT" && type==="range") return;
+  const dpM={w:[0,-1],a:[-1,0],s:[0,1],d:[1,0]}[k];
+  const imM={i:[0,-1],j:[-1,0],k:[0,1],l:[1,0],ArrowUp:[0,-1],ArrowLeft:[-1,0],ArrowDown:[0,1],ArrowRight:[1,0]}[k];
+  if(!dpM && !imM) return;
+  e.preventDefault(); e.stopPropagation();
+  if(dpM) nudgeDetector(dpM[0]*st, dpM[1]*st); else nudgeProbe(imM[0]*st, imM[1]*st);
+}, true);
+// menus and checkboxes hand focus back after a choice, so keys go to the views
+document.addEventListener("change",e=>{ const t=e.target; if(t && (t.tagName==="SELECT" || t.type==="checkbox")) setTimeout(()=>t.blur(),0); }, true);
+function nudgeDetector(dx,dy){
+  const d=S.det, cl=(v,n)=>Math.max(0,Math.min(n-1,v));
+  if(d.shape==="rect"){ const w=d.x1-d.x0, h=d.y1-d.y0; d.x0=cl(d.x0+dx,S.kx-w); d.x1=d.x0+w; d.y0=cl(d.y0+dy,S.ky-h); d.y1=d.y0+h; }
+  else { d.cx=+cl(d.cx+dx,S.kx).toFixed(1); d.cy=+cl(d.cy+dy,S.ky).toFixed(1); }
+  update(true,false);
+}
+function nudgeProbe(dx,dy){
+  if(S.rsMode==="rect" && S.rsRect){ const r=S.rsRect, xa=Math.min(r.x0,r.x1), xb=Math.max(r.x0,r.x1), ya=Math.min(r.y0,r.y1), yb=Math.max(r.y0,r.y1);
+    const sx=Math.max(-xa,Math.min(S.nx-1-xb,dx)), sy=Math.max(-ya,Math.min(S.ny-1-yb,dy)); // keep the box inside the scan
+    r.x0+=sx; r.x1+=sx; r.y0+=sy; r.y1+=sy; if($("dpShow").value!=="probe") $("dpShow").value="probe"; update(false,true); return; }
+  setProbe(S.probe.x+dx, S.probe.y+dy);
+}
 
 // ---------------------------------------------------------------- export snippet
 $("snip").addEventListener("click",async()=>{
