@@ -2,7 +2,7 @@
 
 A lightweight viewer for exploring 4D-STEM data sets. It's mainly intended for my Nanocharacterization class: students can open and work with data sets in a web browser without installing any code. Everything runs in a single `index.html` file, and data is processed locally in the browser. Nothing is uploaded.
 
-**Live version:** open the GitHub Pages link for this repository, or download `index.html` and open it in any modern browser.
+**Live version: [https://david-a-muller.github.io/4D-STEM-browser/](https://david-a-muller.github.io/4D-STEM-browser/)**. Or download `index.html` and open it in any modern browser.
 
 ## What it does
 
