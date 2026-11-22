@@ -72,14 +72,14 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
   <input id="file" type="file" hidden accept=".h5,.hdf5,.emd,.py4dstem,.nxs,.tif,.tiff,.raw,.npy,.bin,.dat">
   <select id="demoSel" title="Load a simulated dataset">
     <option value="">Load demo data…</option>
-    <option value="ws2">WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
-    <option value="ws2b">WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
-    <option value="ws2tc">WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
-    <option value="wse2">WSe₂ monolayer, in focus, 0.1 Å step, 12 mrad (disk-overlap interference, noise-free)</option>
-    <option value="wse2df">WSe₂ monolayer, 50 nm underfocus, 21.4 mrad (Ronchigram shadow image, noise-free)</option>
-    <option value="atom1">Single W atom, 200 Å underfocus (noise-free, 80 kV, 21.4 mrad)</option>
-    <option value="atoms">Two W atoms: one at focus, one 20 nm below (noise-free, 80 kV, 21.4 mrad)</option>
-    <option value="grains">Polycrystal + particle (separated disks)</option>
+    <option value="ws2">1. WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
+    <option value="ws2b">2. WS₂ monolayer, 80 kV, 11 mrad (partially overlapping disk lattice)</option>
+    <option value="ws2tc">3. WS₂ monolayer, 80 kV, 21.4 mrad, 20 nm underfocus (for tilt-corrected BF)</option>
+    <option value="wse2">4. WSe₂ monolayer, in focus, 0.1 Å step, 12 mrad (disk-overlap interference, noise-free)</option>
+    <option value="wse2df">5. WSe₂ monolayer, 50 nm underfocus, 21.4 mrad (Ronchigram shadow image, noise-free)</option>
+    <option value="atom1">6. Single W atom, 200 Å underfocus (noise-free, 80 kV, 21.4 mrad)</option>
+    <option value="atoms">7. Two W atoms: one at focus, one 20 nm below (noise-free, 80 kV, 21.4 mrad)</option>
+    <option value="grains">8. Polycrystal + particle (separated disks)</option>
   </select>
   <button id="saveBtn" disabled>Save image…</button>
   <span class="info" id="info">HDF5 / EMD / py4DSTEM, TIFF stacks, EMPAD .raw, .npy. Drag a file anywhere.</span>
@@ -843,8 +843,8 @@ async function rawDialog(f){
 
 // ---------------------------------------------------------------- synthetic demo
 $("demoSel").addEventListener("change",async()=>{
-  const v=$("demoSel").value; $("demoSel").value="";
-  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="atom1") await demoAtoms(true); else if(v==="wse2") await demoWSe2(); else if(v==="wse2df") await demoWSe2(500, 21.4); else if(v==="grains") await demoGrains(); }catch(e){ showError(e); }
+  const v=$("demoSel").value, label=$("demoSel").selectedOptions[0]?.textContent||"", num=(label.match(/^(\d+)\./)||[])[1]; $("demoSel").value="";
+  try{ if(v==="ws2") await demoWS2(21.4); else if(v==="ws2b") await demoWS2(11); else if(v==="ws2tc") await demoWS2(21.4,200); else if(v==="atoms") await demoAtoms(); else if(v==="atom1") await demoAtoms(true); else if(v==="wse2") await demoWSe2(); else if(v==="wse2df") await demoWSe2(500, 21.4); else if(v==="grains") await demoGrains(); if(num && S.data) $("info").textContent=`Demo ${num}: `+$("info").textContent; }catch(e){ showError(e); }
 });
 async function demoGrains(){
   busy("Generating demo dataset…"); await tick();
