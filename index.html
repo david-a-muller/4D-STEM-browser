@@ -24,6 +24,21 @@ select,input[type=number],input[type=text]{background:var(--bg);color:var(--text
 input[type=number]{width:72px}
 input[type=range]{accent-color:var(--accent);width:110px}
 main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px 16px}
+.ptpanel{margin:0 16px 14px}
+.ptctl{margin:4px 0 6px}
+.ptnote{color:var(--muted);font-size:12px;margin-bottom:10px}
+.ptgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start}
+@media (max-width:1100px){.ptgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.ptgrid figure{margin:0;min-width:0}
+.ptgrid canvas{width:100%;height:auto;display:block;background:#000;border-radius:4px}
+.ptgrid #ptErr{background:var(--bg)}
+.ptgrid figcaption{color:var(--muted);font-size:12px;margin-top:4px}
+.ptphwrap{position:relative}
+.ptgrid #ptPS{position:absolute;top:5px;right:5px;width:38%;height:auto;aspect-ratio:1;border:1px solid rgba(255,255,255,.5);border-radius:3px;box-shadow:0 2px 8px rgba(0,0,0,.6);background:#000}
+#ptProbes{display:grid;gap:6px;grid-template-columns:1fr}
+#ptProbes.m2,#ptProbes.m3,#ptProbes.m4{grid-template-columns:1fr 1fr}
+#ptProbes .tile{position:relative}
+#ptProbes .tile span{position:absolute;left:4px;top:2px;font-size:11px;color:#fff;text-shadow:0 0 3px #000}
 @media (max-width:900px){main{grid-template-columns:1fr}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
 .ptitle{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
@@ -156,6 +171,31 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     </div>
   </section>
 </main>
+<section class="panel ptpanel" id="ptPanel">
+  <div class="ptitle"><h2>Iterative ptychography (single slice)</h2><span class="readout" id="ptInfo">Load data, set the Optics calibration, then start.</span></div>
+  <div class="row ptctl">
+    <button class="primary" id="ptStart">Start iterative reconstruction</button>
+    <button id="ptPause" disabled>Pause</button>
+    <button id="ptReset" disabled>Reset</button>
+    <button id="ptSave" disabled title="Save the reconstruction as PNG, PDF, CSV or NumPy (.npy)">Save…</button>
+    <span class="pair geo"><span>iterations</span><input type="number" id="ptIt" value="30" min="1" step="1"></span>
+    <span class="pair geo"><span>probe modes</span><select id="ptModes"><option>1</option><option>2</option><option>3</option><option>4</option></select></span>
+    <span class="pair geo"><span>update probe from iteration</span><input type="number" id="ptPs" value="3" min="1" step="1"></span>
+    <span class="pair geo"><span>workers</span><select id="ptWk" title="Parallel Web Workers (CPU threads). auto = number of CPU cores, up to 16"><option value="auto">auto</option><option>1</option><option>2</option><option>4</option><option>8</option><option>16</option></select></span>
+    <span class="pair geo"><span>detector window</span><select id="ptWin" title="fit: largest power-of-2 window inside the detector. pad: next power of 2 covering the whole detector; the extra pixels are treated as unmeasured. Padding gives finer object pixels (λ / window angle) but runs ~4× slower"><option value="fit">fit inside</option><option value="pad">pad (finer object pixels)</option></select></span>
+    <label class="pair geo" title="Unchecked: fit only the bright-field disk (|θ| ≤ α), as tcBF/ACBF do. Checked: use every detector pixel in the window"><input type="checkbox" id="ptDF" checked><span>use dark field</span></label>
+    <label class="pair geo" title="Power spectrum of the reconstructed phase, with the bright-field limit 2α/λ marked"><input type="checkbox" id="ptPSon" checked><span>power spectrum</span></label>
+    <span class="pair geo"><span>β object</span><input type="number" id="ptBo" value="1" min="0" max="2" step="0.1"></span>
+    <span class="pair geo"><span>β probe</span><input type="number" id="ptBp" value="1" min="0" max="2" step="0.1"></span>
+  </div>
+  <div class="hint ptnote">Uses the Optics settings for the starting probe and geometry: Aperture α, Beam Energy, Δf, Cs, mrad/px, step, rotation and flip (shown when Signal is tcBF, ACBF or iDPC).</div>
+  <div class="ptgrid">
+    <figure><div class="ptphwrap"><canvas id="ptPh"></canvas><canvas id="ptPS" title="Power spectrum of the phase: dashed circle = 2α/λ (bright-field limit), frame edge = object-pixel Nyquist. Hover for d-spacing"></canvas></div><figcaption>Object phase <span class="readout" id="ptPhR"></span></figcaption></figure>
+    <figure><canvas id="ptAm"></canvas><figcaption>Object amplitude <span class="readout" id="ptAmR"></span></figcaption></figure>
+    <figure><div id="ptProbes"></div><figcaption>Probe amplitude <span id="ptProbeCap"></span></figcaption></figure>
+    <figure><canvas id="ptErr" width="520" height="380"></canvas><figcaption>Data error vs iteration</figcaption></figure>
+  </div>
+</section>
 <div class="status" id="status">Drag the detector to move it; drag its edge to resize. Click or drag in the virtual image to pick the probe position.</div>
 <div class="status keys">Keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> nudge the detector · <kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> or arrows move the probe (or the averaging box) · one pixel per press, <kbd>Shift</kbd> ×5</div>
 
@@ -1086,6 +1126,243 @@ async function refineACBF(){
 }
 $("acRef").addEventListener("click",()=>refineACBF().catch(e=>{ busy(); showError(e); }));
 
+// ---------------------------------------------------------------- single-slice iterative ptychography (ePIE-style, mixed-state probe)
+// Exit wave ψ_m = P_m(r − r_j)·O(r); |FFT|² summed over probe modes m is matched to the measured pattern.
+// Serial updates in random order: O += β_O Σ_m P_m*·Δψ_m / max Σ|P_m|²,  P_m += β_P O*·Δψ_m / max|O|².
+// Sub-pixel scan positions: each probe mode is shifted by its fractional offset with a Fourier phase ramp.
+const PT={st:null, running:false};
+function ptLog(t){ $("ptInfo").textContent=t; }
+// Parallel engine: the scan is split into spatial stripes, one per Web Worker. Each sweep is processed in mini-batches:
+// every worker computes, for its positions in the batch, Σ P*·Δψ and Σ|P|² on its strip of the object (object fixed
+// during the batch) and the probe gradient Σ O*·Δψ, Σ|O|². The main thread applies a least-squares object update per
+// batch, O += β_O Σ P*Δψ / (Σ|P|² + δ), and the probe update once per sweep.
+function makeFFT2(n){ // radix-2, per-stage twiddles, columns via a contiguous buffer
+  const lg=Math.log2(n), rev=new Uint32Array(n);
+  for(let i=0;i<n;i++){ let r=0; for(let b=0;b<lg;b++) r|=((i>>b)&1)<<(lg-1-b); rev[i]=r; }
+  const tw=[]; for(let size=2;size<=n;size<<=1){ const h=size>>1, c=new Float64Array(h), s=new Float64Array(h); for(let k=0;k<h;k++){ c[k]=Math.cos(2*Math.PI*k/size); s[k]=-Math.sin(2*Math.PI*k/size); } tw.push([c,s]); }
+  const tr=new Float64Array(n), ti=new Float64Array(n);
+  const f1=(re,im,o,inv)=>{
+    for(let i=0;i<n;i++){ const j=rev[i]; if(j>i){ let t=re[o+i]; re[o+i]=re[o+j]; re[o+j]=t; t=im[o+i]; im[o+i]=im[o+j]; im[o+j]=t; } }
+    let si=0;
+    for(let size=2;size<=n;size<<=1,si++){ const h=size>>1, c=tw[si][0], s=tw[si][1], sg=inv?-1:1;
+      for(let k=0;k<h;k++){ const wr=c[k], wi=sg*s[k];
+        for(let a=o+k;a<o+n;a+=size){ const b=a+h, br=re[b], bi=im[b], xr=br*wr-bi*wi, xi=br*wi+bi*wr; re[b]=re[a]-xr; im[b]=im[a]-xi; re[a]+=xr; im[a]+=xi; } } } };
+  return (re,im,inv)=>{
+    for(let r=0;r<n;r++) f1(re,im,r*n,inv);
+    for(let col=0;col<n;col++){ for(let r=0;r<n;r++){ tr[r]=re[r*n+col]; ti[r]=im[r*n+col]; } f1(tr,ti,0,inv); for(let r=0;r<n;r++){ re[r*n+col]=tr[r]; im[r*n+col]=ti[r]; } }
+  };
+}
+function ptWorkerMain(){ // runs inside each Web Worker (source is serialised into a blob)
+  let N,NN,M,meas,mask,pos,np,bx,by,bw,bh,fft,order;
+  let Pk,Ps,ex,a0,oR,oI,Imod,ramp,gK,anyFrac;
+  const rnd=(seed)=>()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
+  onmessage=(e)=>{ const d=e.data;
+    if(d.cmd==="init"){ ({N,M,meas,mask,pos,bx,by,bw,bh}=d); NN=N*N; np=pos.length/2; fft=makeFFT2(N);
+      const C=()=>[new Float64Array(NN),new Float64Array(NN)];
+      Pk=Array.from({length:M},C); Ps=Array.from({length:M},C); ex=Array.from({length:M},C); a0=Array.from({length:M},C); gK=Array.from({length:M},C);
+      oR=new Float64Array(NN); oI=new Float64Array(NN); Imod=new Float64Array(NN); ramp=[new Float64Array(NN),new Float64Array(NN)];
+      postMessage({cmd:"ready"}); return; }
+    if(d.cmd==="sweep"){ const r=rnd(d.seed); order=Array.from({length:np},(_,j)=>j); for(let j=np-1;j>0;j--){ const k=Math.floor(r()*(j+1)); [order[j],order[k]]=[order[k],order[j]]; } return; }
+    if(d.cmd==="batch"){
+      const {Or,Oi,modes,k,nb,upProbe}=d, lo=Math.floor(k*np/nb), hi=Math.floor((k+1)*np/nb);
+      const numR=new Float64Array(bw*bh), numI=new Float64Array(bw*bh), den=new Float64Array(bw*bh);
+      const pnR=modes.map(()=>new Float64Array(NN)), pnI=modes.map(()=>new Float64Array(NN)), pden=new Float64Array(NN);
+      for(let m=0;m<M;m++){ Pk[m][0].set(modes[m][0]); Pk[m][1].set(modes[m][1]); fft(Pk[m][0],Pk[m][1],false); gK[m][0].fill(0); gK[m][1].fill(0); }
+      anyFrac=false; let e2=0, m2=0;
+      for(let n=lo;n<hi;n++){
+        const j=order[n], px=pos[2*j]-bx, py=pos[2*j+1]-by, ix=Math.floor(px), iy=Math.floor(py), fx=px-ix, fy=py-iy, mo=j*NN, frac=(fx>1e-6||fy>1e-6);
+        if(frac){ anyFrac=true; // separable phase ramp for the sub-pixel shift
+          const exr=new Float64Array(N), exi=new Float64Array(N), eyr=new Float64Array(N), eyi=new Float64Array(N);
+          for(let h=0;h<N;h++){ const kk=(h<N/2?h:h-N)/N, a=-2*Math.PI*kk*fx, b=-2*Math.PI*kk*fy; exr[h]=Math.cos(a); exi[h]=Math.sin(a); eyr[h]=Math.cos(b); eyi[h]=Math.sin(b); }
+          for(let v=0;v<N;v++) for(let h=0;h<N;h++){ const q=v*N+h; ramp[0][q]=exr[h]*eyr[v]-exi[h]*eyi[v]; ramp[1][q]=exr[h]*eyi[v]+exi[h]*eyr[v]; }
+          for(let m=0;m<M;m++){ const [kr,ki]=Pk[m], [pr,pi]=Ps[m]; for(let q=0;q<NN;q++){ const rr=ramp[0][q], ri=ramp[1][q]; pr[q]=(kr[q]*rr-ki[q]*ri)/NN; pi[q]=(kr[q]*ri+ki[q]*rr)/NN; } fft(pr,pi,true); }
+        } else { for(let m=0;m<M;m++){ Ps[m][0].set(modes[m][0]); Ps[m][1].set(modes[m][1]); } }
+        for(let y=0;y<N;y++){ const ob=(iy+y)*bw+ix, wb=y*N; for(let x=0;x<N;x++){ oR[wb+x]=Or[ob+x]; oI[wb+x]=Oi[ob+x]; } }
+        Imod.fill(0);
+        for(let m=0;m<M;m++){ const [pr,pi]=Ps[m], [er,ei]=ex[m], [ar,ai]=a0[m];
+          for(let q=0;q<NN;q++){ const r=pr[q]*oR[q]-pi[q]*oI[q], i=pr[q]*oI[q]+pi[q]*oR[q]; er[q]=r; ei[q]=i; ar[q]=r; ai[q]=i; }
+          fft(er,ei,false); for(let q=0;q<NN;q++) Imod[q]+=er[q]*er[q]+ei[q]*ei[q]; }
+        for(let q=0;q<NN;q++){ if(!mask[q]){ Imod[q]=-1; continue; } const a=Math.sqrt(Imod[q]), b=meas[mo+q]; e2+=(a-b)*(a-b); m2+=b*b; Imod[q]=b/(a+1e-12); }
+        for(let m=0;m<M;m++){ const [er,ei]=ex[m], [ar,ai]=a0[m];
+          for(let q=0;q<NN;q++){ const sc=Imod[q]; if(sc>=0){ er[q]*=sc; ei[q]*=sc; } }
+          fft(er,ei,true); for(let q=0;q<NN;q++){ er[q]=er[q]/NN-ar[q]; ei[q]=ei[q]/NN-ai[q]; } }      // Δψ_m
+        // object: Σ P*Δψ and Σ|P|² on the strip
+        for(let y=0;y<N;y++){ const ob=(iy+y)*bw+ix, wb=y*N;
+          for(let x=0;x<N;x++){ const q=wb+x; let nr=0, ni=0, dd=0;
+            for(let m=0;m<M;m++){ const pr=Ps[m][0][q], pi=Ps[m][1][q], er=ex[m][0][q], ei=ex[m][1][q]; nr+=pr*er+pi*ei; ni+=pr*ei-pi*er; dd+=pr*pr+pi*pi; }
+            numR[ob+x]+=nr; numI[ob+x]+=ni; den[ob+x]+=dd; } }
+        if(upProbe){ // probe: Σ O*Δψ, moved back to the probe frame (Fourier domain for sub-pixel positions)
+          for(let q=0;q<NN;q++) pden[q]+=oR[q]*oR[q]+oI[q]*oI[q];
+          for(let m=0;m<M;m++){ const [er,ei]=ex[m];
+            for(let q=0;q<NN;q++){ const r=oR[q]*er[q]+oI[q]*ei[q], i=oR[q]*ei[q]-oI[q]*er[q]; er[q]=r; ei[q]=i; }
+            if(frac){ fft(er,ei,false); const [gr,gi]=gK[m]; for(let q=0;q<NN;q++){ const rr=ramp[0][q], ri=-ramp[1][q]; gr[q]+=er[q]*rr-ei[q]*ri; gi[q]+=er[q]*ri+ei[q]*rr; } }
+            else { const nr=pnR[m], ni=pnI[m]; for(let q=0;q<NN;q++){ nr[q]+=er[q]; ni[q]+=ei[q]; } } } }
+      }
+      if(upProbe && anyFrac) for(let m=0;m<M;m++){ const [gr,gi]=gK[m]; fft(gr,gi,true); for(let q=0;q<NN;q++){ pnR[m][q]+=gr[q]/NN; pnI[m][q]+=gi[q]/NN; } }
+      const tr=[numR.buffer,numI.buffer,den.buffer,pden.buffer,...pnR.map(a=>a.buffer),...pnI.map(a=>a.buffer)];
+      postMessage({cmd:"done",numR,numI,den,pnR,pnI,pden,e2,m2,count:hi-lo},tr);
+    }
+  };
+}
+let PT_WORKER_URL=null;
+function ptWorkerURL(){ if(!PT_WORKER_URL){ const src=`const makeFFT2=${makeFFT2.toString()};\n(${ptWorkerMain.toString()})();`; PT_WORKER_URL=URL.createObjectURL(new Blob([src],{type:"text/javascript"})); } return PT_WORKER_URL; }
+function ptCall(w,msg,transfer){ return new Promise((res,rej)=>{ w.onmessage=e=>res(e.data); w.onerror=err=>rej(new Error("Worker error: "+(err.message||err))); w.postMessage(msg,transfer||[]); }); }
+function ptKill(){ if(PT.st && PT.st.workers) for(const w of PT.st.workers) w.worker.terminate(); }
+async function ptSetup(){
+  if(!S.data) throw new Error("Load a dataset first.");
+  ptKill();
+  const P=tcParams(), V=(+$("acKV").value||300)*1e3, lam=12.2643/Math.sqrt(V*(1+0.97848e-6*V)), Cs=(+$("acCs").value||0)*1e7;
+  const mr=P.mr*1e-3, al=acAlpha()*1e-3; if(!(parseFloat($("acAl").value)>0) && P.mr===1) throw new Error("Set the Optics calibration first (Aperture α or mrad/px, step, beam energy).");
+  // fit: largest power of 2 inside the detector. pad: smallest power of 2 covering it, doubled if that equals the detector
+  // size, so the object pixel (λ / window angle) is always finer than with "fit"; extra pixels are unmeasured (masked).
+  let N=1; if($("ptWin").value==="pad"){ while(N<Math.max(S.kx,S.ky) && N<256) N*=2; if(N===Math.max(S.kx,S.ky) && N<256) N*=2; } else { while(N*2<=Math.min(S.kx,S.ky) && N<256) N*=2; }
+  const cx0=Math.round(S.bf.cx), cy0=Math.round(S.bf.cy), K=S.K, NN=N*N, Np=S.N;
+  const mask=new Uint8Array(NN), idx=new Int32Array(NN).fill(-1);
+  const useDF=$("ptDF").checked, rBF=al/mr+1;               // BF-only: keep |θ| ≤ α (+1 px for the soft edge)
+  for(let v=0;v<N;v++) for(let h=0;h<N;h++){ const fy=v<N/2?v:v-N, fx=h<N/2?h:h-N, y=cy0+fy, x=cx0+fx; if(x>=0&&y>=0&&x<S.kx&&y<S.ky && (useDF || Math.hypot(fx,fy)<=rBF)){ idx[v*N+h]=y*S.kx+x; mask[v*N+h]=1; } }
+  const dx=lam/(N*mr), cs=Math.cos(-P.rot), sn=Math.sin(-P.rot), pos=new Float64Array(2*Np);
+  for(let iy=0;iy<S.ny;iy++) for(let ix=0;ix<S.nx;ix++){ const sx=ix*P.st, sy=iy*P.st; let a=cs*sx-sn*sy, b=sn*sx+cs*sy; if(P.flip){ const t=a; a=b; b=t; } const j=iy*S.nx+ix; pos[2*j]=a/dx; pos[2*j+1]=b/dx; }
+  let mnx=Infinity, mny=Infinity, mxx=-Infinity, mxy=-Infinity; for(let j=0;j<Np;j++){ mnx=Math.min(mnx,pos[2*j]); mny=Math.min(mny,pos[2*j+1]); mxx=Math.max(mxx,pos[2*j]); mxy=Math.max(mxy,pos[2*j+1]); }
+  const pad=4; for(let j=0;j<Np;j++){ pos[2*j]+=pad-mnx; pos[2*j+1]+=pad-mny; }
+  const OW=Math.ceil(mxx-mnx)+N+2*pad+1, OH=Math.ceil(mxy-mny)+N+2*pad+1;
+  // workers: contiguous blocks of scan positions (spatial stripes), each with its own patterns and object strip
+  const wsel=$("ptWk").value, nW=Math.max(1,Math.min(Np, wsel==="auto"? Math.min(16,navigator.hardwareConcurrency||4) : +wsel));
+  const M=+$("ptModes").value, workers=[]; let tot=0;
+  for(let w=0;w<nW;w++){
+    const j0=Math.floor(w*Np/nW), j1=Math.floor((w+1)*Np/nW), np_=j1-j0, wpos=new Float64Array(2*np_), wmeas=new Float32Array(np_*NN);
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    for(let j=j0;j<j1;j++){ const px=pos[2*j], py=pos[2*j+1]; wpos[2*(j-j0)]=px; wpos[2*(j-j0)+1]=py; x0=Math.min(x0,Math.floor(px)); y0=Math.min(y0,Math.floor(py)); x1=Math.max(x1,Math.floor(px)); y1=Math.max(y1,Math.floor(py));
+      const b=j*K, o=(j-j0)*NN; for(let q=0;q<NN;q++){ if(idx[q]<0) continue; const I=S.data[b+idx[q]], a=Math.sqrt(I>0?I:0); wmeas[o+q]=a; tot+=a*a; } }
+    const bx=x0, by=y0, bw=x1-x0+N+1, bh=y1-y0+N+1;
+    const worker=new Worker(ptWorkerURL());
+    workers.push({worker, bx, by, bw, bh, np:np_, init:ptCall(worker,{cmd:"init",N,M,meas:wmeas,mask,pos:wpos,bx,by,bw,bh},[wmeas.buffer,wpos.buffer])});
+    if((w&3)===3){ ptLog(`starting workers… ${w+1}/${nW}`); await new Promise(r=>setTimeout(r,0)); }
+  }
+  await Promise.all(workers.map(w=>w.init));
+  const meanTot=tot/Np;
+  const fft=makeFFT2(N), kf=h=>((h<N/2?h:h-N)/N)/dx, dk=1/(N*dx), ka=al/lam;
+  const pr=new Float64Array(NN), pi=new Float64Array(NN);
+  for(let v=0;v<N;v++) for(let h=0;h<N;h++){ const kx_=kf(h), ky_=kf(v), k2=kx_*kx_+ky_*ky_, k=Math.sqrt(k2), A=Math.sqrt(Math.min(1,Math.max(0,(ka-k)/dk+0.5)));
+    const chi=Math.PI*lam*k2*(0.5*Cs*lam*lam*k2-P.df), sg=((h+v)&1)?-1:1; pr[v*N+h]=sg*A*Math.cos(-chi); pi[v*N+h]=sg*A*Math.sin(-chi); }
+  fft(pr,pi,true);
+  let pw=0; for(let q=0;q<NN;q++) pw+=pr[q]*pr[q]+pi[q]*pi[q]; const sc=Math.sqrt(meanTot/(NN*pw)); for(let q=0;q<NN;q++){ pr[q]*=sc; pi[q]*=sc; }
+  const modes=[];
+  for(let m=0;m<M;m++){ const r=new Float64Array(NN), i=new Float64Array(NN);
+    if(m===0){ r.set(pr); i.set(pi); }
+    else for(let v=0;v<N;v++) for(let h=0;h<N;h++){ const q=v*N+h, u=(h-N/2)/(N/6), w_=(v-N/2)/(N/6), f= m===1? u : m===2? w_ : u*w_; r[q]=pr[q]*f; i[q]=pi[q]*f; }
+    modes.push([r,i]); }
+  if(M>1){ for(let m=1;m<M;m++){ let a=0; for(let q=0;q<NN;q++) a+=modes[m][0][q]**2+modes[m][1][q]**2; const t=Math.sqrt(0.1*meanTot/NN/(a||1)); for(let q=0;q<NN;q++){ modes[m][0][q]*=t; modes[m][1][q]*=t; } } orthoModes(modes,NN); }
+  const Or=new Float64Array(OW*OH).fill(1), Oi=new Float64Array(OW*OH);
+  PT.st={N, NN, dx, lam, mask, pos, OW, OH, Or, Oi, modes, it:0, err:[], Np, dataId:S.dataId, meanTot, win:$("ptWin").value, wsel, workers, tIter:[], useDF, al:acAlpha()};
+  ptLog(`N = ${N} px window (${useDF? "bright + dark field" : "bright field only"}) · object pixel ${dx.toFixed(3)} Å · Nyquist ${(1/(2*dx)).toFixed(2)} Å⁻¹ vs 2α/λ ${(2*al/lam).toFixed(2)} Å⁻¹ · ${Np} positions · ${nW} worker${nW>1?"s":""} · Δf ${P.df} Å · α ${acAlpha().toFixed(1)} mrad`);
+}
+function orthoModes(modes,NN){ // Gram–Schmidt, then sort by power
+  for(let m=0;m<modes.length;m++){ const [ar,ai]=modes[m];
+    for(let n=0;n<m;n++){ const [br,bi]=modes[n]; let dr=0,di=0,nb=0; for(let q=0;q<NN;q++){ dr+=br[q]*ar[q]+bi[q]*ai[q]; di+=br[q]*ai[q]-bi[q]*ar[q]; nb+=br[q]*br[q]+bi[q]*bi[q]; }
+      if(nb>0){ dr/=nb; di/=nb; for(let q=0;q<NN;q++){ const r=br[q]*dr-bi[q]*di, i=br[q]*di+bi[q]*dr; ar[q]-=r; ai[q]-=i; } } } }
+  const pw=m=>{ let s=0; for(let q=0;q<NN;q++) s+=modes[m][0][q]**2+modes[m][1][q]**2; return s; };
+  const order=modes.map((_,m)=>[pw(m),m]).sort((a,b)=>b[0]-a[0]).map(x=>x[1]); const copy=order.map(m=>modes[m]); for(let m=0;m<modes.length;m++) modes[m]=copy[m];
+}
+async function ptRun(){
+  const T=PT.st, {N,NN,OW,OH,Or,Oi,modes,Np,workers}=T, M=modes.length, itMax=Math.max(1,+$("ptIt").value||30);
+  const bo=+$("ptBo").value||1, bp=+$("ptBp").value||1, pStart=Math.max(1,+$("ptPs").value||3);
+  const nb=Math.max(1,Math.min(16,Math.round(Np/64)));           // mini-batches per sweep (~Np/16 positions each)
+  const numR=new Float64Array(OW*OH), numI=new Float64Array(OW*OH), den=new Float64Array(OW*OH);
+  while(PT.running && T.it<itMax){
+    const t0=performance.now(), upProbe=T.it+1>=pStart; let e2=0, m2=0, done=0;
+    const gN=modes.map(()=>[new Float64Array(NN),new Float64Array(NN)]), gD=new Float64Array(NN);
+    for(const w of workers) w.worker.postMessage({cmd:"sweep", seed:(Math.random()*4294967296)>>>0});
+    for(let k=0;k<nb && PT.running;k++){
+      const res=await Promise.all(workers.map(w=>{ const n=w.bw*w.bh, cr=new Float64Array(n), ci=new Float64Array(n);
+        for(let y=0;y<w.bh;y++){ const o=(w.by+y)*OW+w.bx; cr.set(Or.subarray(o,o+w.bw),y*w.bw); ci.set(Oi.subarray(o,o+w.bw),y*w.bw); }
+        return ptCall(w.worker,{cmd:"batch",Or:cr,Oi:ci,modes,k,nb,upProbe},[cr.buffer,ci.buffer]); }));
+      // least-squares object update from this batch
+      let dmax=0;
+      res.forEach((r,wi)=>{ const w=workers[wi]; for(let y=0;y<w.bh;y++){ const o=(w.by+y)*OW+w.bx, s=y*w.bw; for(let x=0;x<w.bw;x++){ numR[o+x]+=r.numR[s+x]; numI[o+x]+=r.numI[s+x]; den[o+x]+=r.den[s+x]; } }
+        e2+=r.e2; m2+=r.m2; done+=r.count;
+        if(upProbe){ for(let m=0;m<M;m++){ const [nr,ni]=gN[m]; for(let q=0;q<NN;q++){ nr[q]+=r.pnR[m][q]; ni[q]+=r.pnI[m][q]; } } for(let q=0;q<NN;q++) gD[q]+=r.pden[q]; } });
+      for(let q=0;q<OW*OH;q++) if(den[q]>dmax) dmax=den[q];
+      const dl=1e-3*dmax;
+      for(let q=0;q<OW*OH;q++){ const d=den[q]; if(d>0){ Or[q]+=bo*numR[q]/(d+dl); Oi[q]+=bo*numI[q]/(d+dl); } numR[q]=0; numI[q]=0; den[q]=0; }
+      $("ptInfo").textContent=`iteration ${T.it+1}/${itMax} · ${Math.round(100*done/Np)}%`;
+    }
+    if(!PT.running) break;
+    if(upProbe){ let dmax=0; for(let q=0;q<NN;q++) if(gD[q]>dmax) dmax=gD[q];
+      for(let m=0;m<M;m++){ const [pr,pi]=modes[m], [nr,ni]=gN[m]; for(let q=0;q<NN;q++){ const d=gD[q]+1e-3*dmax; pr[q]+=bp*nr[q]/d; pi[q]+=bp*ni[q]/d; } } }
+    if(M>1) orthoModes(modes,NN);
+    T.it++; T.err.push(Math.sqrt(e2/(m2||1))); T.tIter.push(performance.now()-t0);
+    ptDraw(); $("ptInfo").textContent=`iteration ${T.it}/${itMax} · error ${T.err[T.err.length-1].toFixed(4)} · ${(T.tIter[T.tIter.length-1]/1000).toFixed(2)} s/iteration on ${workers.length} worker${workers.length>1?"s":""}`;
+    await new Promise(r=>setTimeout(r,0));
+  }
+  if(!PT.running && T.it<itMax) $("ptInfo").textContent=`paused at iteration ${T.it} (object updates from the partial sweep are kept) · press Resume to continue`;
+  if(T.it>=itMax){ PT.running=false; ptButtons(); $("ptInfo").textContent=`finished ${T.it} iterations · error ${T.err.length? T.err[T.err.length-1].toFixed(4):"–"} · ${(T.tIter.reduce((a,b)=>a+b,0)/T.tIter.length/1000).toFixed(2)} s/iteration on ${workers.length} worker${workers.length>1?"s":""} · press Start to continue`; }
+}
+function ptDraw(){
+  const T=PT.st; if(!T) return; const {N,OW,OH,Or,Oi,pos,Np}=T;
+  // crop to the scanned area (probe centres) plus a quarter window
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity; for(let j=0;j<Np;j++){ x0=Math.min(x0,pos[2*j]); y0=Math.min(y0,pos[2*j+1]); x1=Math.max(x1,pos[2*j]); y1=Math.max(y1,pos[2*j+1]); }
+  const m=N/2, a=Math.max(0,Math.floor(x0+m-N/8)), b=Math.max(0,Math.floor(y0+m-N/8)), c=Math.min(OW,Math.ceil(x1+m+N/8)), d=Math.min(OH,Math.ceil(y1+m+N/8)), w=c-a, h=d-b;
+  const ph=new Float32Array(w*h), am=new Float32Array(w*h);
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const q=(y+b)*OW+x+a; ph[y*w+x]=Math.atan2(Oi[q],Or[q]); am[y*w+x]=Math.hypot(Or[q],Oi[q]); }
+  const sh=(arr,id,rid,unit)=>{ const [lo,hi]=percentiles(arr,0.5,99.5); render($(id),arr,w,h,lo,hi,LUT.gray); $(rid).textContent=`${lo.toFixed(3)} to ${hi.toFixed(3)}${unit}`; };
+  sh(ph,"ptPh","ptPhR"," rad"); sh(am,"ptAm","ptAmR","");
+  T.phCrop={ph,w,h}; T.amCrop=am; T.crop={a,b,w,h}; ptDrawPS();
+  // probes
+  const box=$("ptProbes"), M=T.modes.length; box.className="m"+M;
+  if(box.children.length!==M){ box.innerHTML=""; for(let k=0;k<M;k++){ const t=document.createElement("div"); t.className="tile"; t.innerHTML='<canvas></canvas><span></span>'; box.appendChild(t); } }
+  let tot=0; const pw=T.modes.map(([r,i])=>{ let s=0; for(let q=0;q<T.NN;q++) s+=r[q]*r[q]+i[q]*i[q]; tot+=s; return s; });
+  T.modes.forEach(([r,i],k)=>{ const A=new Float32Array(T.NN); for(let q=0;q<T.NN;q++) A[q]=Math.hypot(r[q],i[q]);
+    let mx=0; for(const v of A) mx=Math.max(mx,v); const cv=box.children[k].firstChild; render(cv,A,N,N,0,mx,LUT.inferno);
+    box.children[k].lastChild.textContent= M>1? `mode ${k+1}: ${(100*pw[k]/tot).toFixed(1)}%` : ""; });
+  $("ptProbeCap").textContent = M>1? `(${M} mixed-state modes)` : "";
+  ptPlot();
+}
+function ptDrawPS(){
+  const c=$("ptPS"), T=PT.st; c.style.display=$("ptPSon").checked? "block" : "none"; if(!T||!T.phCrop||!$("ptPSon").checked) return;
+  const {ph,w,h}=T.phCrop; let Pn=64; while(Pn<Math.max(w,h)) Pn*=2;
+  const re=new Float64Array(Pn*Pn), im=new Float64Array(Pn*Pn); let m=0; for(const v of ph) m+=v; m/=ph.length;
+  for(let y=0;y<h;y++){ const wy=0.5-0.5*Math.cos(2*Math.PI*(y+0.5)/h); for(let x=0;x<w;x++) re[y*Pn+x]=(ph[y*w+x]-m)*wy*(0.5-0.5*Math.cos(2*Math.PI*(x+0.5)/w)); }
+  makeFFT2(Pn)(re,im,false);
+  const ps=new Float32Array(Pn*Pn), H2=Pn/2; for(let y=0;y<Pn;y++) for(let x=0;x<Pn;x++){ const q=((y+H2)%Pn)*Pn+((x+H2)%Pn); ps[y*Pn+x]=Math.log10(re[q]*re[q]+im[q]*im[q]+1e-30); }
+  ps[H2*Pn+H2]=ps[H2*Pn+H2+1]; let [lo,hi]=percentiles(ps,40,99.95); lo=Math.max(lo,hi-5);
+  render(c,ps,Pn,Pn,lo,hi,LUT.inferno); T.psN=Pn; T.psArr=ps;
+  const rad=(2*T.al*1e-3/T.lam)*Pn*T.dx, ctx=c.getContext("2d");   // 2α/λ in PS pixels (pixel = 1/(Pn·dx) Å⁻¹)
+  if(rad<Pn*0.75){ ctx.save(); ctx.strokeStyle="rgba(79,179,255,0.95)"; ctx.lineWidth=Math.max(1,Pn/200); ctx.setLineDash([Pn/40,Pn/60]); ctx.beginPath(); ctx.arc(H2,H2,rad,0,2*Math.PI); ctx.stroke(); ctx.restore(); }
+}
+$("ptPSon").addEventListener("change",()=>ptDrawPS());
+$("ptPS").addEventListener("pointermove",e=>{ const T=PT.st; if(!T||!T.psN) return; const r=$("ptPS").getBoundingClientRect(), n=T.psN;
+  const fx=((e.clientX-r.left)/r.width-0.5)*n, fy=((e.clientY-r.top)/r.height-0.5)*n, g=Math.hypot(fx,fy)/(n*T.dx);
+  $("ptPhR").textContent= g>0? `|g| = ${g.toFixed(3)} Å⁻¹ · d = ${(1/g).toFixed(2)} Å · ${(g/(2*T.al*1e-3/T.lam)).toFixed(2)} × 2α/λ` : ""; });
+$("ptPS").addEventListener("pointerleave",()=>{ if(PT.st) ptDraw(); });
+function ptPlot(c=$("ptErr"), light=false, k=1){
+  const ctx=c.getContext("2d"), W=c.width/k, H=c.height/k, T=PT.st; ctx.setTransform(k,0,0,k,0,0); ctx.clearRect(0,0,W,H);
+  const col= light? {fr:"#555",tx:"#222",gr:"#ddd",ln:"#1f6fd1"} : {fr:"#4a5060",tx:"#9aa1ad",gr:"#2b303b",ln:"#4fb3ff"};
+  if(light){ ctx.fillStyle="#fff"; ctx.fillRect(0,0,W,H); }
+  const L=56, Rm=14, Tm=14, B=40; ctx.strokeStyle=col.fr; ctx.lineWidth=1; ctx.strokeRect(L,Tm,W-L-Rm,H-Tm-B);
+  ctx.fillStyle=col.tx; ctx.font="12px system-ui,sans-serif"; ctx.textAlign="center"; ctx.fillText("iteration",L+(W-L-Rm)/2,H-8);
+  ctx.save(); ctx.translate(14,Tm+(H-Tm-B)/2); ctx.rotate(-Math.PI/2); ctx.fillText("data error (log)",0,0); ctx.restore();
+  if(!T||!T.err.length) return;
+  const e=T.err, n=e.length, lo=Math.log10(Math.min(...e)), hi=Math.log10(Math.max(...e)), span=Math.max(0.05,hi-lo), y0=lo-0.08*span, y1=hi+0.08*span;
+  const X=i=>L+(n>1? i/(n-1) : 0.5)*(W-L-Rm), Y=v=>Tm+(1-(Math.log10(v)-y0)/(y1-y0))*(H-Tm-B);
+  ctx.textAlign="right"; for(let k=0;k<=4;k++){ const lv=y0+(y1-y0)*k/4, yy=Tm+(1-k/4)*(H-Tm-B); ctx.fillText((10**lv).toPrecision(2),L-6,yy+4); ctx.strokeStyle=col.gr; ctx.beginPath(); ctx.moveTo(L,yy); ctx.lineTo(W-Rm,yy); ctx.stroke(); }
+  ctx.textAlign="center"; const tk=Math.max(1,Math.ceil(n/6)); for(let i=0;i<n;i+=tk) ctx.fillText(String(i+1),X(i),H-B+16);
+  ctx.strokeStyle=col.ln; ctx.lineWidth=2; ctx.beginPath(); e.forEach((v,i)=>{ i? ctx.lineTo(X(i),Y(v)) : ctx.moveTo(X(i),Y(v)); }); ctx.stroke();
+  ctx.fillStyle=col.ln; e.forEach((v,i)=>{ ctx.beginPath(); ctx.arc(X(i),Y(v),2.5,0,2*Math.PI); ctx.fill(); });
+}
+function ptButtons(){
+  $("ptStart").disabled=PT.running; $("ptPause").disabled=!PT.running; $("ptReset").disabled=!PT.st && !PT.running; $("ptSave").disabled=!(PT.st && PT.st.it>0);
+  $("ptStart").textContent = PT.st && PT.st.it>0 ? "Resume iterative reconstruction" : "Start iterative reconstruction";
+}
+$("ptStart").addEventListener("click",async()=>{
+  try{ if(!PT.st || PT.st.dataId!==S.dataId || PT.st.modes.length!==+$("ptModes").value || PT.st.win!==$("ptWin").value || PT.st.wsel!==$("ptWk").value || PT.st.useDF!==$("ptDF").checked){ PT.running=true; ptButtons(); await ptSetup(); if(!PT.running){ ptButtons(); return; } }
+    PT.running=true; ptButtons(); await ptRun(); }
+  catch(e){ PT.running=false; ptButtons(); showError(e); }
+  ptButtons();
+});
+$("ptPause").addEventListener("click",()=>{ PT.running=false; ptButtons(); if(PT.st) $("ptInfo").textContent=`paused at iteration ${PT.st.it}`; });
+$("ptReset").addEventListener("click",()=>{ PT.running=false; ptKill(); PT.st=null; $("ptSave").disabled=true; $("ptProbes").innerHTML=""; for(const id of ["ptPh","ptAm"]){ const c=$(id); c.getContext("2d").clearRect(0,0,c.width,c.height); } $("ptPhR").textContent=""; $("ptAmR").textContent=""; ptPlot(); ptLog("Reset. Press Start to begin a new reconstruction."); ptButtons(); });
+ptPlot();
+
 // ---------------------------------------------------------------- iDPC (integrated centre of mass)
 // CoM over the detector mask (detector px, mean removed) → rotate/flip into scan frame → deflection θ (rad)
 // ∇φ = (2π/λ) θ  ⇒  φ̂(g) = g·Θ̂(g) / (iλ(|g|² + g0²)),  g in Å⁻¹, g0 = 1/high-pass length.
@@ -1165,20 +1442,22 @@ function makeFFT(n){
 }
 async function demoWS2(alphaMrad, dfA=0){
   busy("Simulating WS₂ 4D-STEM data…"); await tick();
-  // Instrument: 80 kV, 21.4 mrad convergence semi-angle, in focus. Sampling 0.4 Å, 64×64 window → 64×64 pattern, ±52 mrad.
-  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, defocus=dfA, dose=5e5;
-  const G=nS+N, phi=new Float32Array(G*G);
+  // Instrument: 80 kV. Patterns are 64×64 at 1.63 mrad/px (±52 mrad), scan step 0.4 Å. Internally the specimen and probe are
+  // computed on a 2× finer grid (0.2 Å, 128×128 = the same 25.6 Å window) and each pattern is cropped to its central 64×64,
+  // so atoms can be sharp without aliasing; scattering beyond ±52 mrad simply misses the detector.
+  const N=64, OS=2, Ns=N*OS, dx=0.4, dxs=dx/OS, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, defocus=dfA, dose=5e5;
+  const G=nS*OS+Ns, phi=new Float32Array(G*G);
   // 1H-WS2: a = 3.18 Å; W at origin, S2 column at (a1+a2)/3. Lattice rotated 12°.
   const a=3.18, th=12*Math.PI/180, rot=(x,y)=>[x*Math.cos(th)-y*Math.sin(th), x*Math.sin(th)+y*Math.cos(th)];
-  const a1=rot(a,0), a2=rot(a/2,a*Math.sqrt(3)/2), o=G*dx/2;
-  const sig=0.35, PW=0.50, PS=0.18;         // peak phase (rad) of W column and of one S atom, after thermal/source blur
+  const a1=rot(a,0), a2=rot(a/2,a*Math.sqrt(3)/2), o=G*dxs/2;
+  const sig=0.25, SC=(0.35/sig)**2, PW=0.50*SC, PS=0.18*SC;   // Gaussian atoms; integrated phase kept at the earlier values (peak W ≈ 0.98 rad)
   const defects={"W:1,-2":0, "S:-2,1":1, "S:2,1":0, "S:0,3":1}; // value = number of S atoms remaining (W:0 = vacancy)
-  const addG=(x,y,amp)=>{ const cx=x/dx, cy=y/dx, R=Math.ceil(3*sig/dx);
+  const addG=(x,y,amp)=>{ const cx=x/dxs, cy=y/dxs, R=Math.ceil(3.5*sig/dxs);
     for(let iy=Math.max(0,Math.floor(cy)-R); iy<=Math.min(G-1,Math.ceil(cy)+R); iy++) for(let ix=Math.max(0,Math.floor(cx)-R); ix<=Math.min(G-1,Math.ceil(cx)+R); ix++)
-      phi[iy*G+ix]+=amp*Math.exp(-(((ix-cx)**2+(iy-cy)**2)*dx*dx)/(2*sig*sig)); };
+      phi[iy*G+ix]+=amp*Math.exp(-(((ix-cx)**2+(iy-cy)**2)*dxs*dxs)/(2*sig*sig)); };
   for(let i=-14;i<=14;i++) for(let j=-14;j<=14;j++){
     const wx=o+i*a1[0]+j*a2[0], wy=o+i*a1[1]+j*a2[1];
-    if(wx<-2||wy<-2||wx>G*dx+2||wy>G*dx+2) continue;
+    if(wx<-2||wy<-2||wx>G*dxs+2||wy>G*dxs+2) continue;
     const kW="W:"+i+","+j, kS="S:"+i+","+j;
     if(!(kW in defects)) addG(wx,wy,PW); else if(defects[kW]>0) addG(wx,wy,PW*defects[kW]);
     const nS2 = kS in defects ? defects[kS] : 2;
@@ -1187,23 +1466,23 @@ async function demoWS2(alphaMrad, dfA=0){
   const tre=new Float32Array(G*G), tim=new Float32Array(G*G);
   for(let i=0;i<G*G;i++){ tre[i]=Math.cos(phi[i]); tim[i]=Math.sin(phi[i]); }
   // probe: aperture in k-space (soft 1-px edge), defocus phase, inverse FFT, centred in window
-  const fft=makeFFT(N), pr=new Float64Array(N*N), pi=new Float64Array(N*N), dk=1/(N*dx), kmax=alpha/lam;
-  for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
-    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k=Math.hypot(fx,fy);
+  const fft=makeFFT2(Ns), pr=new Float64Array(Ns*Ns), pi=new Float64Array(Ns*Ns), dk=1/(Ns*dxs), kmax=alpha/lam;
+  for(let iy=0;iy<Ns;iy++) for(let ix=0;ix<Ns;ix++){
+    const fx=(ix<Ns/2?ix:ix-Ns)*dk, fy=(iy<Ns/2?iy:iy-Ns)*dk, k=Math.hypot(fx,fy);
     const A=Math.sqrt(Math.min(1,Math.max(0,(kmax-k)/dk+0.5))), chi=-Math.PI*lam*defocus*k*k, /* Kirkland: chi = pi*lam*k^2*(Cs..-df), df>0 underfocus */ sgn=((ix+iy)&1)?-1:1; // sgn shifts probe to window centre
-    pr[iy*N+ix]=sgn*A*Math.cos(-chi); pi[iy*N+ix]=sgn*A*Math.sin(-chi);
+    pr[iy*Ns+ix]=sgn*A*Math.cos(-chi); pi[iy*Ns+ix]=sgn*A*Math.sin(-chi);
   }
   fft(pr,pi,true);
-  let pn=0; for(let i=0;i<N*N;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<N*N;i++){ pr[i]/=pn; pi[i]/=pn; }
+  let pn=0; for(let i=0;i<Ns*Ns;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<Ns*Ns;i++){ pr[i]/=pn; pi[i]/=pn; }
   let seed=11; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return (seed+0.5)/4294967296; };
   const poisson=l=>{ if(l>30) return Math.max(0,Math.round(l+Math.sqrt(l)*Math.sqrt(-2*Math.log(rnd()))*Math.cos(2*Math.PI*rnd()))); const L=Math.exp(-l); let k=0,p=1; do{ k++; p*=rnd(); }while(p>L); return k-1; };
-  const K=N*N, data=new Float32Array(nS*nS*K), er=new Float64Array(K), ei=new Float64Array(K), h=N/2;
+  const K=N*N, Ks=Ns*Ns, data=new Float32Array(nS*nS*K), er=new Float64Array(Ks), ei=new Float64Array(Ks), h=N/2;
   for(let sy=0;sy<nS;sy++){
     for(let sx=0;sx<nS;sx++){
-      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx, wb=y*N; for(let x=0;x<N;x++){ const g=gb+x, w=wb+x; er[w]=pr[w]*tre[g]-pi[w]*tim[g]; ei[w]=pr[w]*tim[g]+pi[w]*tre[g]; } }
+      for(let y=0;y<Ns;y++){ const gb=(sy*OS+y)*G+sx*OS, wb=y*Ns; for(let x=0;x<Ns;x++){ const g=gb+x, w=wb+x; er[w]=pr[w]*tre[g]-pi[w]*tim[g]; ei[w]=pr[w]*tim[g]+pi[w]*tre[g]; } }
       fft(er,ei,false);
       const b=(sy*nS+sx)*K;
-      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const s=((y+h)%N)*N+((x+h)%N), I=(er[s]*er[s]+ei[s]*ei[s])/K*dose; data[b+y*N+x]=poisson(I); }
+      for(let y=0;y<N;y++){ const ry=((y-h+Ns)%Ns)*Ns; for(let x=0;x<N;x++){ const s=ry+((x-h+Ns)%Ns), I=(er[s]*er[s]+ei[s]*ei[s])/Ks*dose; data[b+y*N+x]=poisson(I); } }
     }
     if((sy&3)===3){ busy(`Simulating WS₂ 4D-STEM data… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
@@ -1220,34 +1499,34 @@ async function demoWSe2(dfA=0, alphaMrad=12){
   busy("Simulating WSe₂ (fine scan)…"); await tick();
   // 80 kV, α = 12 mrad, in focus, noise-free. Simulation grid 0.4 Å, 128×128 window → 0.0195 Å⁻¹ (0.82 mrad) per pixel,
   // patterns cropped to the central 72×72 (±29 mrad). Scan step 0.1 Å = ¼ grid pixel: the probe is shifted sub-pixel in Fourier space.
-  const N=128, dx=0.4, sub=4, step=dx/sub, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, Kc= alphaMrad>15? 80 : 72, c0=(N-Kc)/2, K=N*N, h=N/2, dose=1e5;
-  const G=Math.ceil(nS/sub)+N+2, phi=new Float32Array(G*G);
+  const N=128, OS=2, Ns=N*OS, dx=0.4, dxs=dx/OS, sub=4, step=dx/sub, subs=sub/OS, nS=64, lam=0.04176, alpha=alphaMrad*1e-3, Kc= alphaMrad>15? 80 : 72, K=Ns*Ns, dose=1e5; // simulated on a 2× finer grid (0.2 Å, 256² window), patterns cropped to Kc×Kc
+  const G=Math.ceil(nS/subs)+Ns+2, phi=new Float32Array(G*G);
   // 1H-WSe2, a = 3.28 Å, unrotated: W at origin, Se2 column at (a1+a2)/3. Peak phases (rad) after blur: W 0.5, one Se 0.28.
-  const a=3.28, a1=[a,0], a2=[a/2,a*Math.sqrt(3)/2], sig=0.35, PW=0.5, PSe=0.28;
+  const a=3.28, a1=[a,0], a2=[a/2,a*Math.sqrt(3)/2], sig=0.25, PW=0.5*(0.35/0.25)**2, PSe=0.28*(0.35/0.25)**2;   // sharper atoms, same integrated phase
   const ox=(N/2+nS/sub/2)*dx - 0.25*a, oy=(N/2+nS/sub/2)*dx - 0.3*a; // place the field over ~2 cells, off high-symmetry
-  const addG=(x,y,amp)=>{ const cx=x/dx, cy=y/dx, Rr=Math.ceil(3*sig/dx);
+  const addG=(x,y,amp)=>{ const cx=x/dxs, cy=y/dxs, Rr=Math.ceil(3.5*sig/dxs);
     for(let iy=Math.max(0,Math.floor(cy)-Rr); iy<=Math.min(G-1,Math.ceil(cy)+Rr); iy++) for(let ix=Math.max(0,Math.floor(cx)-Rr); ix<=Math.min(G-1,Math.ceil(cx)+Rr); ix++)
-      phi[iy*G+ix]+=amp*Math.exp(-(((ix-cx)**2+(iy-cy)**2)*dx*dx)/(2*sig*sig)); };
+      phi[iy*G+ix]+=amp*Math.exp(-(((ix-cx)**2+(iy-cy)**2)*dxs*dxs)/(2*sig*sig)); };
   for(let i=-30;i<=30;i++) for(let j=-30;j<=30;j++){ const wx=ox+i*a1[0]+j*a2[0], wy=oy+i*a1[1]+j*a2[1];
-    if(wx<-2||wy<-2||wx>G*dx+2||wy>G*dx+2) continue; addG(wx,wy,PW); addG(wx+(a1[0]+a2[0])/3, wy+(a1[1]+a2[1])/3, 2*PSe); }
+    if(wx<-2||wy<-2||wx>G*dxs+2||wy>G*dxs+2) continue; addG(wx,wy,PW); addG(wx+(a1[0]+a2[0])/3, wy+(a1[1]+a2[1])/3, 2*PSe); }
   const tre=new Float32Array(G*G), tim=new Float32Array(G*G); for(let i=0;i<G*G;i++){ tre[i]=Math.cos(phi[i]); tim[i]=Math.sin(phi[i]); }
-  // probes for each sub-pixel offset (fx, fy) ∈ {0, ¼, ½, ¾}²
-  const fft=makeFFT(N), dk=1/(N*dx), kmax=alpha/lam, probes=[];
-  for(let qy=0;qy<sub;qy++) for(let qx=0;qx<sub;qx++){
+  // probes for each sub-pixel offset of the 0.2 Å grid (0 or ½ pixel per axis)
+  const fft=makeFFT2(Ns), dk=1/(Ns*dxs), kmax=alpha/lam, probes=[];
+  for(let qy=0;qy<subs;qy++) for(let qx=0;qx<subs;qx++){
     const pr=new Float64Array(K), pi=new Float64Array(K), sxA=qx*step, syA=qy*step;
-    for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){ const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k=Math.hypot(fx,fy);
+    for(let iy=0;iy<Ns;iy++) for(let ix=0;ix<Ns;ix++){ const fx=(ix<Ns/2?ix:ix-Ns)*dk, fy=(iy<Ns/2?iy:iy-Ns)*dk, k=Math.hypot(fx,fy);
       const A=Math.sqrt(Math.min(1,Math.max(0,(kmax-k)/dk+0.5))), sgn=((ix+iy)&1)?-1:1, ph=-2*Math.PI*(fx*sxA+fy*syA)+Math.PI*lam*dfA*k*k; /* shift ramp + defocus: χ = −πλΔf k², ψ = A e^{−iχ} */
-      pr[iy*N+ix]=sgn*A*Math.cos(ph); pi[iy*N+ix]=sgn*A*Math.sin(ph); }
+      pr[iy*Ns+ix]=sgn*A*Math.cos(ph); pi[iy*Ns+ix]=sgn*A*Math.sin(ph); }
     fft(pr,pi,true); let pn=0; for(let i=0;i<K;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<K;i++){ pr[i]/=pn; pi[i]/=pn; }
     probes.push([pr,pi]); }
   const data=new Float32Array(nS*nS*Kc*Kc), er=new Float64Array(K), ei=new Float64Array(K);
   for(let sy=0;sy<nS;sy++){
     for(let sx=0;sx<nS;sx++){
-      const gx=Math.floor(sx/sub), gy=Math.floor(sy/sub), [pr,pi]=probes[(sy%sub)*sub+(sx%sub)];
-      for(let y=0;y<N;y++){ const gb=(gy+y)*G+gx, wb=y*N; for(let x=0;x<N;x++){ const g=gb+x, w=wb+x; er[w]=pr[w]*tre[g]-pi[w]*tim[g]; ei[w]=pr[w]*tim[g]+pi[w]*tre[g]; } }
+      const gx=Math.floor(sx/subs), gy=Math.floor(sy/subs), [pr,pi]=probes[(sy%subs)*subs+(sx%subs)];
+      for(let y=0;y<Ns;y++){ const gb=(gy+y)*G+gx, wb=y*Ns; for(let x=0;x<Ns;x++){ const g=gb+x, w=wb+x; er[w]=pr[w]*tre[g]-pi[w]*tim[g]; ei[w]=pr[w]*tim[g]+pi[w]*tre[g]; } }
       fft(er,ei,false);
       const b=(sy*nS+sx)*Kc*Kc;
-      for(let y=0;y<Kc;y++) for(let x=0;x<Kc;x++){ const q=((y+c0+h)%N)*N+((x+c0+h)%N); data[b+y*Kc+x]=(er[q]*er[q]+ei[q]*ei[q])/K*dose; }
+      for(let y=0;y<Kc;y++){ const ry=((y-Kc/2+Ns)%Ns)*Ns; for(let x=0;x<Kc;x++){ const q=ry+((x-Kc/2+Ns)%Ns); data[b+y*Kc+x]=(er[q]*er[q]+ei[q]*ei[q])/K*dose; } }
     }
     if((sy&1)===1){ busy(`Simulating WSe₂ (fine scan)… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
@@ -1270,34 +1549,34 @@ async function demoAtoms(single=false){
   busy(single? "Simulating a single atom…" : "Simulating two single atoms…"); await tick();
   // 80 kV, 21.4 mrad, focused on atom A's plane. Atom B sits dz = 20 nm further along the beam:
   // probe → ×t_A → Fresnel propagate dz → ×t_B → far field. At B the probe is 200 Å overfocused (Δf = −200 Å, Kirkland sign).
-  const N=64, dx=0.4, nS=64, lam=0.04176, alpha=0.0214, dz=200, dose=5e5, K=N*N, h=N/2, probeDf = single? 200 : 0; // single: Kirkland Δf=+200 Å (underfocus)
-  const G=nS+N, o=G*dx/2, sig=0.35, PW=0.5;
+  const N=64, OS=2, Ns=N*OS, dx=0.4, dxs=dx/OS, nS=64, lam=0.04176, alpha=0.0214, dz=200, dose=5e5, K=N*N, Ks=Ns*Ns, h=N/2, /* computed on a 2× finer grid, patterns cropped to the central 64×64 */ probeDf = single? 200 : 0; // single: Kirkland Δf=+200 Å (underfocus)
+  const G=nS*OS+Ns, o=G*dxs/2, sig=0.25, PW=0.5*(0.35/0.25)**2;   // sharper atom, same integrated phase
   const mkT=(ax,ay)=>{ const re=new Float32Array(G*G), im=new Float32Array(G*G);
-    for(let iy=0;iy<G;iy++) for(let ix=0;ix<G;ix++){ const r2=((ix*dx-ax)**2+(iy*dx-ay)**2), ph=PW*Math.exp(-r2/(2*sig*sig)); re[iy*G+ix]=Math.cos(ph); im[iy*G+ix]=Math.sin(ph); }
+    for(let iy=0;iy<G;iy++) for(let ix=0;ix<G;ix++){ const r2=((ix*dxs-ax)**2+(iy*dxs-ay)**2), ph=PW*Math.exp(-r2/(2*sig*sig)); re[iy*G+ix]=Math.cos(ph); im[iy*G+ix]=Math.sin(ph); }
     return [re,im]; };
   const [aR,aI]= single? mkT(o,o) : mkT(o-4.6,o-3.0), [bR,bI]= single? [null,null] : mkT(o+4.6,o+3.0);   // A upper-left (in focus), B lower-right (20 nm below)
-  const fft=makeFFT(N), pr=new Float64Array(K), pi=new Float64Array(K), dk=1/(N*dx), kmax=alpha/lam, qr=new Float64Array(K), qi=new Float64Array(K);
-  for(let iy=0;iy<N;iy++) for(let ix=0;ix<N;ix++){
-    const fx=(ix<N/2?ix:ix-N)*dk, fy=(iy<N/2?iy:iy-N)*dk, k2=fx*fx+fy*fy, A=Math.sqrt(Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5))), sgn=((ix+iy)&1)?-1:1;
-    const chiP=-Math.PI*lam*probeDf*k2; pr[iy*N+ix]=sgn*A*Math.cos(-chiP); pi[iy*N+ix]=sgn*A*Math.sin(-chiP);
-    const ph=-Math.PI*lam*dz*k2, bl = Math.sqrt(k2) < 0.95/(2*dx) ? 1 : 0; qr[iy*N+ix]=bl*Math.cos(ph)/K; qi[iy*N+ix]=bl*Math.sin(ph)/K; // propagator (÷K for unnormalised inverse FFT)
+  const fft=makeFFT2(Ns), pr=new Float64Array(Ks), pi=new Float64Array(Ks), dk=1/(Ns*dxs), kmax=alpha/lam, qr=new Float64Array(Ks), qi=new Float64Array(Ks);
+  for(let iy=0;iy<Ns;iy++) for(let ix=0;ix<Ns;ix++){
+    const fx=(ix<Ns/2?ix:ix-Ns)*dk, fy=(iy<Ns/2?iy:iy-Ns)*dk, k2=fx*fx+fy*fy, A=Math.sqrt(Math.min(1,Math.max(0,(kmax-Math.sqrt(k2))/dk+0.5))), sgn=((ix+iy)&1)?-1:1;
+    const chiP=-Math.PI*lam*probeDf*k2; pr[iy*Ns+ix]=sgn*A*Math.cos(-chiP); pi[iy*Ns+ix]=sgn*A*Math.sin(-chiP);
+    const ph=-Math.PI*lam*dz*k2, bl = Math.sqrt(k2) < 0.95/(2*dxs) ? 1 : 0; qr[iy*Ns+ix]=bl*Math.cos(ph)/Ks; qi[iy*Ns+ix]=bl*Math.sin(ph)/Ks; // propagator (÷K for unnormalised inverse FFT)
   }
-  fft(pr,pi,true); let pn=0; for(let i=0;i<K;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<K;i++){ pr[i]/=pn; pi[i]/=pn; }
+  fft(pr,pi,true); let pn=0; for(let i=0;i<Ks;i++) pn+=pr[i]*pr[i]+pi[i]*pi[i]; pn=Math.sqrt(pn); for(let i=0;i<Ks;i++){ pr[i]/=pn; pi[i]/=pn; }
   let seed=23; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return (seed+0.5)/4294967296; };
   const poisson=l=>{ if(l>30) return Math.max(0,Math.round(l+Math.sqrt(l)*Math.sqrt(-2*Math.log(rnd()))*Math.cos(2*Math.PI*rnd()))); const L=Math.exp(-l); let k=0,p=1; do{ k++; p*=rnd(); }while(p>L); return k-1; };
-  const data=new Float32Array(nS*nS*K), er=new Float64Array(K), ei=new Float64Array(K);
+  const data=new Float32Array(nS*nS*K), er=new Float64Array(Ks), ei=new Float64Array(Ks);
   for(let sy=0;sy<nS;sy++){
     for(let sx=0;sx<nS;sx++){
-      for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x; er[w]=pr[w]*aR[g]-pi[w]*aI[g]; ei[w]=pr[w]*aI[g]+pi[w]*aR[g]; } }
+      for(let y=0;y<Ns;y++){ const gb=(sy*OS+y)*G+sx*OS; for(let x=0;x<Ns;x++){ const g=gb+x, w=y*Ns+x; er[w]=pr[w]*aR[g]-pi[w]*aI[g]; ei[w]=pr[w]*aI[g]+pi[w]*aR[g]; } }
       fft(er,ei,false);
       if(!single){
-        for(let i=0;i<K;i++){ const a=er[i], b=ei[i]; er[i]=a*qr[i]-b*qi[i]; ei[i]=a*qi[i]+b*qr[i]; }
+        for(let i=0;i<Ks;i++){ const a=er[i], b=ei[i]; er[i]=a*qr[i]-b*qi[i]; ei[i]=a*qi[i]+b*qr[i]; }
         fft(er,ei,true);
-        for(let y=0;y<N;y++){ const gb=(sy+y)*G+sx; for(let x=0;x<N;x++){ const g=gb+x, w=y*N+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
+        for(let y=0;y<Ns;y++){ const gb=(sy*OS+y)*G+sx*OS; for(let x=0;x<Ns;x++){ const g=gb+x, w=y*Ns+x, a=er[w], b=ei[w]; er[w]=a*bR[g]-b*bI[g]; ei[w]=a*bI[g]+b*bR[g]; } }
         fft(er,ei,false);
       }
       const bo=(sy*nS+sx)*K;
-      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y+h)%N)*N+((x+h)%N); data[bo+y*N+x]=(er[q]*er[q]+ei[q]*ei[q])/K*dose; /* noise-free (expected counts) */ }
+      for(let y=0;y<N;y++) for(let x=0;x<N;x++){ const q=((y-h+Ns)%Ns)*Ns+((x-h+Ns)%Ns); data[bo+y*N+x]=(er[q]*er[q]+ei[q]*ei[q])/Ks*dose; /* noise-free (expected counts) */ }
     }
     if((sy&3)===3){ busy(`Simulating ${single?"a single atom":"two single atoms"}… ${Math.round(100*(sy+1)/nS)}%`); await tick(); }
   }
@@ -1402,6 +1681,97 @@ function openSave(){
   };
 }
 $("saveBtn").addEventListener("click",openSave); $("saveBtn2").addEventListener("click",openSave);
+// ---------------------------------------------------------------- saving the ptychography reconstruction
+function npyBlob(data, shape, descr){   // NumPy .npy v1.0, little-endian
+  let hdr=`{'descr': '${descr}', 'fortran_order': False, 'shape': (${shape.join(", ")}${shape.length===1?",":""}), }`;
+  const tot=10+hdr.length+1, pad=(64-tot%64)%64; hdr+=" ".repeat(pad)+"\n";
+  const h=new Uint8Array(10); h.set([0x93,78,85,77,80,89,1,0]); h[8]=hdr.length&255; h[9]=hdr.length>>8;
+  return new Blob([h, new TextEncoder().encode(hdr), data.buffer],{type:"application/octet-stream"});
+}
+async function deliverMany(files){
+  if(files.length===1 || DL){ for(const [bl,fn] of files) await deliver(bl,fn); return; }
+  modal(`<h3>${files.length} files</h3><div class="hint">Saving directly isn't available in this view. Use the links below.</div>
+    <div class="actions" style="flex-wrap:wrap">${files.map(([bl,fn])=>`<a class="btn" href="${URL.createObjectURL(bl)}" download="${fn}">${fn}</a>`).join("")}<button onclick="closeModal()">Close</button></div>`);
+}
+function ptProbeCanvas(){   // all probe modes in one grid, white gaps
+  const T=PT.st, tiles=[...$("ptProbes").querySelectorAll("canvas")], M=tiles.length, cols=M>1?2:1, rows=Math.ceil(M/cols), n=T.N, g=Math.max(2,Math.round(n/32));
+  const c=document.createElement("canvas"); c.width=cols*n+(cols-1)*g; c.height=rows*n+(rows-1)*g; const ctx=c.getContext("2d");
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,c.width,c.height); tiles.forEach((t,k)=>ctx.drawImage(t,(k%cols)*(n+g),Math.floor(k/cols)*(n+g))); return c;
+}
+function ptComposite(which, withPS){
+  const T=PT.st, target=900, smooth=true;
+  const scaled=(src, inset)=>{ const s=Math.max(1,Math.round(target/Math.max(src.width,src.height))), c=document.createElement("canvas"); c.width=src.width*s; c.height=src.height*s;
+    const ctx=c.getContext("2d"); ctx.imageSmoothingEnabled=smooth; ctx.imageSmoothingQuality="high"; ctx.drawImage(src,0,0,c.width,c.height);
+    if(inset){ const iw=Math.round(0.36*Math.min(c.width,c.height)), m=Math.round(iw*0.04); ctx.imageSmoothingEnabled=true; ctx.fillStyle="#fff"; ctx.fillRect(c.width-iw-2*m,0,iw+2*m,iw+2*m); ctx.drawImage(inset,c.width-iw-m,m,iw,iw); }
+    return c; };
+  const ps = withPS && T.psArr ? $("ptPS") : null;
+  const errC=()=>{ const c=document.createElement("canvas"); c.width=1040; c.height=760; ptPlot(c,true,2); return c; };
+  if(which==="ph") return scaled($("ptPh"), ps);
+  if(which==="am") return scaled($("ptAm"));
+  if(which==="pr") return scaled(ptProbeCanvas());
+  if(which==="ps"){ if(!T.psArr){ const was=$("ptPSon").checked; $("ptPSon").checked=true; ptDrawPS(); $("ptPSon").checked=was; ptDrawPS(); } return scaled($("ptPS")); }
+  if(which==="err") return errC();
+  // all four panels in a row, equal heights
+  const parts=[scaled($("ptPh"),ps), scaled($("ptAm")), scaled(ptProbeCanvas()), errC()], H=target, gap=30;
+  const ws=parts.map(p=>Math.round(p.width*H/p.height)), c=document.createElement("canvas"); c.width=ws.reduce((a,b)=>a+b,0)+gap*(parts.length-1); c.height=H;
+  const ctx=c.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,c.width,c.height); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+  let x=0; parts.forEach((p,i)=>{ ctx.drawImage(p,x,0,ws[i],H); x+=ws[i]+gap; }); return c;
+}
+function ptCaptions(){
+  const T=PT.st, e=T.err.length? T.err[T.err.length-1].toPrecision(3) : "-";
+  return [S.name, `Single-slice iterative ptychography: ${T.it} iterations, final data error ${e}, ${T.modes.length} probe mode${T.modes.length>1?"s":""}`,
+    `Window ${T.N} x ${T.N} px (${T.win==="pad"?"padded":"fit inside"}), ${T.useDF?"bright + dark field":"bright field only"}; object pixel ${T.dx.toFixed(4)} A; object crop ${T.crop.w} x ${T.crop.h} px`,
+    `Optics: ${$("acKV").value} kV, alpha ${T.al.toFixed(1)} mrad, df ${$("tcDf").value} A, Cs ${$("acCs").value} mm, step ${$("tcSt").value} A, rot ${$("tcRot").value} deg${$("tcFlip").checked?", flipped":""}, ${$("tcMr").value} mrad/px`,
+    `Phase range ${$("ptPhR").textContent.replace(/[^\x20-\x7e]/g,"")}; probe amplitude shown on an inferno map`];
+}
+function openPtSave(){
+  const T=PT.st; if(!T||!T.it) return;
+  modal(`<h3>Save ptychography result</h3>
+    <div class="grid">
+      <label>Content</label><select id="pWhich"><option value="all">All panels side by side</option><option value="ph">Object phase</option><option value="am">Object amplitude</option><option value="pr">Probe amplitude${T.modes.length>1?" (all modes)":""}</option><option value="ps">Power spectrum of phase</option><option value="err">Error vs iteration</option><option value="cplx">Complex object + probe (NumPy)</option></select>
+      <label>Format</label><select id="pFmt"><option value="png">PNG image</option><option value="pdf">PDF (image + reconstruction caption)</option><option value="csv">CSV (raw values)</option><option value="npy">NumPy .npy (raw values)</option></select>
+      <label>Inset</label><label><input type="checkbox" id="pPS" ${$("ptPSon").checked?"checked":""}> Power-spectrum inset on the phase</label>
+    </div><div class="hint" id="pHint"></div>
+    <div class="actions"><button onclick="closeModal()">Cancel</button><button class="primary" id="pGo">Save</button></div>`);
+  const sync=()=>{ const w=$("pWhich").value, f=$("pFmt").value, raw=f==="csv"||f==="npy";
+    if(w==="cplx") $("pFmt").value="npy";
+    if($("pFmt").value==="csv" && w==="all") $("pWhich").value="ph";
+    if($("pFmt").value==="npy" && w==="all") $("pWhich").value="cplx";
+    const W=$("pWhich").value, F=$("pFmt").value;
+    $("pPS").disabled= F==="csv"||F==="npy"|| !(W==="ph"||W==="all");
+    $("pHint").textContent = W==="cplx" ? `Two files: the complex object (complex64, ${T.crop.h} x ${T.crop.w}, cropped to the scanned area) and the probe modes (complex64, ${T.modes.length} x ${T.N} x ${T.N}). Load with numpy.load().`
+      : W==="err" && (F==="csv"||F==="npy") ? "Columns: iteration, data error."
+      : F==="csv"||F==="npy" ? `Values before contrast/colormap${W==="pr"?"; one array per probe mode":W==="ps"?"; log10 power, centred":W==="ph"?" (rad)":""}. Object pixel ${T.dx.toFixed(4)} Å.`
+      : F==="pdf" ? "The caption records the dataset, iterations, error, window, object pixel size and optics." : ""; };
+  ["pWhich","pFmt"].forEach(id=>$(id).addEventListener("change",sync)); sync();
+  $("pGo").onclick=async()=>{
+    const W=$("pWhich").value, F=$("pFmt").value, base=`${stem()}_ptycho_${{all:"panels",ph:"phase",am:"amplitude",pr:"probe",ps:"phase_fft",err:"error",cplx:"complex"}[W]}`;
+    closeModal();
+    try{
+      const {w,h,a,b}=T.crop;
+      if(W==="cplx"){
+        const o=new Float32Array(2*w*h); for(let y=0;y<h;y++) for(let x=0;x<w;x++){ const q=(y+b)*T.OW+x+a, k=2*(y*w+x); o[k]=T.Or[q]; o[k+1]=T.Oi[q]; }
+        const M=T.modes.length, p=new Float32Array(2*M*T.NN); T.modes.forEach(([r,i],m)=>{ for(let q=0;q<T.NN;q++){ p[2*(m*T.NN+q)]=r[q]; p[2*(m*T.NN+q)+1]=i[q]; } });
+        const files=[[npyBlob(o,[h,w],"<c8"), `${stem()}_ptycho_object_complex.npy`],[npyBlob(p,[M,T.N,T.N],"<c8"), `${stem()}_ptycho_probe_complex.npy`]];
+        await deliverMany(files); return; }
+      if(F==="csv"||F==="npy"){
+        if(W==="err"){ const it=T.err.map((v,i)=>[i+1,v]);
+          if(F==="csv") await deliver(new Blob(["iteration,error\n"+it.map(r=>r.join(",")).join("\n")+"\n"]), base+".csv");
+          else await deliver(npyBlob(new Float64Array(it.flat()),[it.length,2],"<f8"), base+".npy"); return; }
+        let arrs=[], n=w, m=h;
+        if(W==="ph") arrs=[T.phCrop.ph]; else if(W==="am") arrs=[T.amCrop];
+        else if(W==="ps"){ if(!T.psArr) ptComposite("ps"); arrs=[T.psArr]; n=m=T.psN; }
+        else { n=m=T.N; arrs=T.modes.map(([r,i])=>{ const A=new Float32Array(T.NN); for(let q=0;q<T.NN;q++) A[q]=Math.hypot(r[q],i[q]); return A; }); }
+        if(F==="npy"){ const all=new Float32Array(arrs.length*n*m); arrs.forEach((A,k)=>all.set(A,k*n*m)); await deliver(npyBlob(all, arrs.length>1?[arrs.length,m,n]:[m,n],"<f4"), base+".npy"); }
+        else await deliverMany(arrs.map((A,k)=>[new Blob([csvOf(A,n,m)]), base+(arrs.length>1?`_mode${k+1}`:"")+".csv"]));
+        return; }
+      const c=ptComposite(W, !$("pPS").disabled && $("pPS").checked);
+      if(F==="png") await deliver(await toBlob(c), base+".png", c);
+      else await deliver(await makePDF(c,[...ptCaptions(), W==="all"?"Panels: object phase, object amplitude, probe amplitude, data error vs iteration":""].filter(Boolean)), base+".pdf");
+    }catch(e){ showError(e); }
+  };
+}
+$("ptSave").addEventListener("click",openPtSave);
 </script>
 </body>
 </html>

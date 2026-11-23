@@ -21,6 +21,22 @@ Keyboard: **W A S D** nudge the detector by one pixel, and **I J K L** (or the a
 - **Tilt-corrected bright field (tcBF)**: each bright-field pixel's image is shifted back by Δf·θ and the shifted images are summed, with optional upsampling. A cross-correlation fit estimates the defocus and the detector rotation. **Refine Δf** then finds the defocus that makes the ACBF reconstruction sharpest. Because it corrects the full contrast transfer, it is not biased by crystal periodicity the way the shift fit is, and the result is used for both tcBF and ACBF.
 - **Aberration-corrected bright field (ACBF)**: tcBF plus correction of each pixel's residual contrast-transfer phase (defocus and Cs), combined with a regularised (Wiener) inverse. The result is a phase image whose transfer has no zero crossings out to 2α.
 
+### Iterative ptychography (single slice)
+
+A panel below the views runs a single-slice ptychographic reconstruction in the browser on the loaded dataset. Use **Start iterative reconstruction**, **Pause** and **Reset**. It shows the object phase, the object amplitude, the probe amplitude (or several probe modes for mixed-state reconstructions), and the data error versus iteration.
+
+- **Algorithm:** mini-batch least-squares updates. In each batch the object is updated by O += β·Σ P*Δψ / (Σ|P|² + δ). The probe update is accumulated over each full sweep. Both stay stable for the dense, highly overlapping scans typical of 4D-STEM.
+- **Parallel:** the scan is split into spatial stripes processed by Web Workers, one per CPU core by default (the **workers** setting). Each worker keeps its own patterns and receives only its strip of the object each batch. It runs on any modern browser, including GitHub Pages, with no special server setup.
+- **Mixed states:** 1–4 probe modes are kept orthogonal, and each mode's share of the power is shown.
+- **Starting probe:** built from the Optics settings (Aperture α, beam energy, Δf, Cs, mrad/px, scan step, rotation and flip). The starting defocus matters, so run **Fit Δf** / **Refine Δf** first.
+- **Sub-pixel scan positions** are handled by shifting the probe with a Fourier phase ramp.
+- **Use dark field:** on by default. Unticked, only the bright-field disk is fitted, as in tcBF and ACBF, so you can compare the two. The **power spectrum** inset on the phase marks 2α/λ with a dashed circle. Bright-field-only reconstructions stop at that circle, while the full detector carries reflections out to the edge of the frame (the object-pixel Nyquist frequency, λ ÷ 2 × the window's angular radius). Hover over the inset to read |g| and the d-spacing.
+- **Detector window:** *fit* uses the largest power-of-2 window inside the detector. *Pad* covers the whole detector and treats the extra pixels as unmeasured. Padding gives finer object pixels (λ ÷ the window's angular size) but runs about 4× slower.
+- **Saving:** **Save…** exports the result once at least one iteration has run, at any point (paused or finished).
+  - **Content:** all panels side by side, or one panel: phase, amplitude, probe(s), power spectrum, or error vs iteration.
+  - **Formats:** PNG; PDF with a caption recording the dataset, iteration count, final error, window, object pixel size and optics; CSV or NumPy `.npy` with the raw values.
+  - **Complex object + probe:** saves `*_object_complex.npy` (complex64, cropped to the scanned area) and `*_probe_complex.npy` (complex64, modes × N × N). Load them with `numpy.load()`.
+
 The tcBF and ACBF modes are based on:
 
 > D. Ma, G. Li, D. A. Muller, S. E. Zeltmann (2026). *Information in 4D-STEM: Where it is, and How to Use it.* Ultramicroscopy **283**, 114351. https://doi.org/10.1016/j.ultramic.2026.114351
@@ -61,7 +77,7 @@ Each demo is numbered in the menu, and the number is shown in the header once it
 7. **Two single W atoms**, noise-free: one in the focal plane and one 20 nm below it. This shows depth sectioning with tcBF and ACBF.
 8. **Polycrystal**: two grains rotated 30° in plane, a vacuum hole, and an amorphous inclusion with an electrostatic field around it.
 
-The WS₂ and two-atom data are simulated from a probe passing through a phase object, with Fresnel propagation between slices for the two-atom case. They are teaching examples, not quantitative simulations.
+The WS₂, WSe₂ and single-atom data sets are wave-optical simulations: probe × phase-object transmission, with Fresnel propagation between slices where there are two. Each is computed on a grid twice as fine as the detector sampling (0.2 Å) and then cropped to the detector, so the atoms can be sharp (Gaussian σ = 0.25 Å) without aliasing. That leaves real information beyond the bright-field limit for ptychography to recover. They are teaching examples, not quantitative simulations: no thermal diffuse scattering, no tabulated atomic potentials, no partial coherence.
 
 ## Conventions
 
