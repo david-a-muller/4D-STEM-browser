@@ -84,7 +84,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
 <header>
   <h1>4D-STEM Browser</h1>
   <label class="btn primary" for="file">Open file…</label>
-  <input id="file" type="file" hidden accept=".h5,.hdf5,.emd,.py4dstem,.nxs,.tif,.tiff,.raw,.npy,.bin,.dat">
+  <input id="file" type="file" hidden accept=".h5,.hdf5,.emd,.py4dstem,.nxs,.mat,.tif,.tiff,.raw,.npy,.bin,.dat">
   <select id="demoSel" title="Load a simulated dataset">
     <option value="">Load demo data…</option>
     <option value="ws2">1. WS₂ monolayer, 80 kV, 21.4 mrad (ptychography conditions)</option>
@@ -97,7 +97,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
     <option value="grains">8. Polycrystal + particle (separated disks)</option>
   </select>
   <button id="saveBtn" disabled>Save image…</button>
-  <span class="info" id="info">HDF5 / EMD / py4DSTEM, TIFF stacks, EMPAD .raw, .npy. Drag a file anywhere.</span>
+  <span class="info" id="info">HDF5 / EMD / py4DSTEM, MATLAB .mat, TIFF stacks, EMPAD .raw, .npy. Drag a file anywhere.</span>
 </header>
 
 <main>
@@ -130,6 +130,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padd
         <span class="pair tconly"><span>upsample</span><select id="tcUp" title="tcBF output grid relative to the scan; the result is always band-limited to 2α/λ"><option>1</option><option selected>2</option><option>4</option></select></span>
         <button class="tconly" id="tcFit" title="Cross-correlate the bright-field pixel images and solve for defocus and rotation">Fit Δf &amp; rotation</button>
         <button class="tconly" id="acRef" title="Find the defocus that makes the ACBF reconstruction sharpest (it corrects the full CTF, so unlike the shift fit it is not biased by crystal periodicity), and use it for tcBF and ACBF. Needs Aperture α, step and beam energy">Refine Δf</button>
+        <button class="tconly" id="acRefSt" title="Find the scan step that makes the ACBF reconstruction sharpest, for when the step calibration is uncertain. Searches 0.6–1.6× the current step, then re-refines Δf at the new step. Needs a non-zero Δf, Aperture α and beam energy">Refine step</button>
         <span class="readout" id="tcInfo"></span>
       </div>
       <label class="k acrow" hidden>ACBF</label>
@@ -688,6 +689,7 @@ async function openFile(f){
     if(["h5","hdf5","emd","py4dstem","nxs","hdf"].includes(ext)) await loadHDF5(f);
     else if(["tif","tiff"].includes(ext)) await loadTIFF(f);
     else if(ext==="npy") await loadNPY(f);
+    else if(ext==="mat") await loadMAT(f);
     else await rawDialog(f);
   }catch(e){ showError(e); }
 }
@@ -712,36 +714,105 @@ async function getH5(){
   }
   throw new Error("Could not load the HDF5 reader (h5wasm) from the CDN: "+(last&&last.message));
 }
-async function loadHDF5(f){
+// Detector / scan shape hints stored in the file (attributes or tiny datasets). Keys are matched on the
+// lowercased name with non-alphanumerics removed. rows = first (slow) pattern axis, cols = second (fast) axis.
+const H5HINT={
+  detRows:["ypixelsindetector","detectorrows","detectorheight","detectorny","framerows","frameheight","qnx","numrows","nrows"],
+  detCols:["xpixelsindetector","detectorcols","detectorcolumns","detectorwidth","detectornx","framecols","framewidth","qny","numcols","ncols"],
+  detPair:["detectorshape","detectorsize","frameshape","framesize","patternshape","diffractionshape","dpshape","signalshape","sigshape","detshape"],
+  scanRows:["rnx","scanrows","scanheight","scansizey","scanny","scany"],
+  scanCols:["rny","scancols","scanwidth","scansizex","scannx","scanx"],
+  scanPair:["scanshape","scansize","navigationshape","navshape","scandimensions","realspaceshape"]};
+function h5Nums(v){ if(v==null) return []; if(typeof v==="string") return (v.match(/\d+/g)||[]).map(Number);
+  if(typeof v==="number"||typeof v==="bigint") return [Number(v)]; if(v.length!==undefined) return Array.from(v,Number); return []; }
+async function loadHDF5(f, mat=false){
   busy("Loading HDF5 reader…"); const {h5,FS}=await getH5();
   busy(`Reading ${f.name} (${(f.size/1048576).toFixed(0)} MB)…`); await tick();
   const fname="/in_"+Date.now()+".h5";
   FS.writeFile(fname, new Uint8Array(await f.arrayBuffer()));
-  const file=new h5.File(fname,"r"); const found=[];
-  const walk=(g,path,depth)=>{ if(depth>12) return; let keys=[]; try{keys=g.keys();}catch{return;}
+  const file=new h5.File(fname,"r"); const found=[], hints={};
+  const norm=k=>String(k).toLowerCase().replace(/[^a-z0-9]/g,"");
+  const note=(name,val,where)=>{ const k=norm(name), n=h5Nums(val).filter(x=>Number.isFinite(x));
+    for(const [key,list] of Object.entries(H5HINT)) if(list.includes(k)){
+      const pair=key.endsWith("Pair"); if(pair? n.length<2 : n.length!==1) continue;
+      const vals=pair? n.slice(-2) : n; if(vals.some(x=>!Number.isInteger(x)||x<2)) continue;
+      if(!hints[key]) hints[key]={v:vals, where}; } };
+  const attrsOf=(o,p)=>{ let a; try{ a=o.attrs; }catch{ return; } if(!a) return;
+    for(const [k,at] of Object.entries(a)){ let v; try{ v= at && at.value!==undefined ? at.value : at; }catch{ continue; } note(k,v,`${p||"/"} @${k}`); } };
+  const walk=(g,path,depth)=>{ if(depth>12) return; attrsOf(g,path); let keys=[]; try{keys=g.keys();}catch{return;}
     for(const k of keys){ let o; try{o=g.get(k);}catch{continue;} if(!o) continue; const p=path+"/"+k;
       const t=o.type; if(t==="Group"||(h5.Group&&o instanceof h5.Group)) walk(o,p,depth+1);
-      else if(t==="Dataset"||(h5.Dataset&&o instanceof h5.Dataset)){ const sh=o.shape; if(sh&&sh.length>=3&&sh.length<=4) found.push({path:p,shape:sh,dtype:String(o.dtype)}); } } };
+      else if(t==="Dataset"||(h5.Dataset&&o instanceof h5.Dataset)){ const sh=o.shape||[], n=sh.reduce((a,b)=>a*b,1); attrsOf(o,p);
+        if(n<=4){ try{ note(k,o.value,p); }catch{} }
+        if(sh.length>=3&&sh.length<=4 || sh.length===2&&!mat&&n>=4096*16) found.push({path:p,shape:sh,dtype:String(o.dtype)}); } } };
   walk(file,"",0); busy();
   const cleanup=()=>{ try{file.close();}catch{} try{FS.unlink(fname);}catch{} };
-  if(!found.length){ cleanup(); throw new Error("No 3D or 4D datasets found in this HDF5 file."); }
+  if(!found.length){ cleanup(); throw new Error("No 2D, 3D or 4D datasets found in this HDF5 file."); }
   const size=s=>s.reduce((a,b)=>a*b,1);
   found.sort((a,b)=>(b.shape.length-a.shape.length)||(size(b.shape)-size(a.shape)));
-  const read=async(entry, rows, cols)=>{
+  if(mat){
+    const read=async(entry, rows, cols)=>{ busy(`Reading ${entry.path}…`); await tick();
+      let v=file.get(entry.path.slice(1)).value; cleanup(); if(Array.isArray(v)) v=Float32Array.from(v);
+      await matSet(v, entry.shape.slice().reverse(), ORD_SAVED, f.name+":"+entry.path.slice(1), rows, cols); };
+    matDialog(found.map(d=>({name:d.path.slice(1), dims:d.shape.slice().reverse(), dtype:d.dtype})), f.name, cleanup,
+      (i,ord,r,c)=>{ ORD_SAVED=ord; return read(found[i],r,c); }); return; }
+  h5LayoutDialog(f.name, found, hints, cleanup, async(entry, L)=>{
     busy(`Reading ${entry.path}…`); await tick();
-    const ds=file.get(entry.path.slice(1)); let v=ds.value; cleanup();
-    if(Array.isArray(v)) v=Float32Array.from(v);
-    const sh=entry.shape;
-    if(sh.length===4) await setData(v,sh[0],sh[1],sh[2],sh[3],`${f.name}:${entry.path}`);
-    else await setData(v,rows,cols,sh[1],sh[2],`${f.name}:${entry.path}`);
-  };
+    let v=file.get(entry.path.slice(1)).value; cleanup(); if(Array.isArray(v)) v=Float32Array.from(v);
+    if(L.patFirst){ busy("Reordering (patterns stored first)…"); await tick();   // [K][N] → [N][K]
+      const K=L.K, N=L.N, out=new v.constructor(N*K); for(let k=0;k<K;k++){ const b=k*N; for(let p=0;p<N;p++) out[p*K+k]=v[b+p]; } v=out; }
+    await setData(v, L.ny, L.nx, L.ky, L.kx, `${f.name}:${entry.path}`);
+  });
+}
+// The data is split into a block of scan positions (N) and a block of pattern pixels (K) at some axis.
+// Patterns-last [N…][K…] is the usual C layout; patterns-first [K…][N…] needs a transpose.
+function h5Layouts(sh){
+  const out=[], nd=sh.length, P=a=>a.reduce((x,y)=>x*y,1);
+  for(let s=1;s<nd;s++){ const A=sh.slice(0,s), B=sh.slice(s); if(A.length>2||B.length>2) continue;
+    out.push({patFirst:false, scanDims:A, patDims:B}); out.push({patFirst:true, scanDims:B, patDims:A}); }
+  return out.map(o=>({...o, N:P(o.scanDims), K:P(o.patDims)}));
+}
+function h5LayoutDialog(fname, found, hints, cleanup, onOK){
+  const det = hints.detPair || (hints.detRows&&hints.detCols ? {v:[hints.detRows.v[0],hints.detCols.v[0]], where:`${hints.detRows.where}, ${hints.detCols.where}`} : null);
+  const scan = hints.scanPair || (hints.scanRows&&hints.scanCols ? {v:[hints.scanRows.v[0],hints.scanCols.v[0]], where:`${hints.scanRows.where}, ${hints.scanCols.where}`} : null);
+  const metaTxt=[det&&`pattern ${det.v[0]} × ${det.v[1]} (${det.where})`, scan&&`scan ${scan.v[0]} × ${scan.v[1]} (${scan.where})`].filter(Boolean).join("; ");
   const opts=found.map((d,i)=>`<option value="${i}">${d.path}  [${d.shape.join("×")}] ${d.dtype}</option>`).join("");
-  modal(`<h3>Choose a dataset</h3><div class="hint">4D datasets are read as (scan rows, scan cols, k rows, k cols), py4DSTEM's (Rx, Ry, Qx, Qy) order. 3D datasets are read as (frames, k rows, k cols) and need a scan shape.</div>
-    <div class="grid"><label>Dataset</label><select id="mDs">${opts}</select></div>
+  modal(`<h3>Choose a dataset</h3>
+    <div class="hint">Shape metadata in the file: ${metaTxt? metaTxt.replace(/</g,"&lt;") : "none found"}.</div>
+    <div class="grid"><label>Dataset</label><select id="mDs">${opts}</select>
+      <label>Layout</label><select id="mLay"></select>
+      <label>Pattern rows × cols</label><span class="pair"><input type="number" id="mKy" min="1" style="width:6em"> × <input type="number" id="mKx" min="1" style="width:6em"></span>
+      <label>Scan rows × cols</label><span class="pair"><input type="number" id="mNy" min="1" style="width:6em"> × <input type="number" id="mNx" min="1" style="width:6em"></span></div>
+    <div class="hint" id="mH"></div><div class="hint err" id="mErr"></div>
     <div class="actions"><button id="mCancel">Cancel</button><button class="primary" id="mOK">Load</button></div>`);
+  let lays=[];
+  const fill=()=>{ const L=lays[+$("mLay").value], two=(d,K,m)=> d.length===2 ? (m && m.v[0]*m.v[1]===K && m.v[0]!==d[0] && m.v[0]!==d[1] ? m.v : d) : (m && m.v[0]*m.v[1]===K ? m.v : factorGuess(K));
+    const k=two(L.patDims,L.K,det); $("mKy").value=k[0]; $("mKx").value=k[1];
+    const sc= L.scanDims.length===2 ? L.scanDims : (scan && scan.v[0]*scan.v[1]<=L.N ? scan.v : factorGuess(L.N)); $("mNy").value=sc[0]; $("mNx").value=sc[1];
+    const msgs=[];
+    if(det && (det.v[0]*det.v[1]!==L.K)) msgs.push(`The file says the pattern is ${det.v[0]} × ${det.v[1]} = ${det.v[0]*det.v[1]} pixels, but this layout has ${L.K} per pattern.`);
+    else if(det && L.patDims.length===2 && det.v[0]!==L.patDims[0]) msgs.push(det.v[0]===L.patDims[1] ? `The file metadata lists the pattern as ${det.v[0]} × ${det.v[1]}, the dataset's axes the other way round (${L.patDims.join(" × ")}); the dataset's own axes are used. Swap rows and cols here if the pattern looks scrambled.` : `The dataset's pattern axes are ${L.patDims.join(" × ")}, but the file metadata says ${det.v[0]} × ${det.v[1]}; the metadata shape is used (same pixel count and memory order).`);
+    if(L.patDims.length===1) msgs.push(`Each pattern is stored flattened (${L.K} values); rows × cols must multiply to ${L.K}.`);
+    if(L.scanDims.length===1) msgs.push(`Scan positions are stored as one list of ${L.N} frames, filled row by row.`);
+    if(L.patFirst) msgs.push("Patterns are stored first, so the data will be transposed on loading.");
+    $("mH").innerHTML=msgs.join("<br>"); $("mErr").textContent=""; };
+  const pick=()=>{ const e=found[+$("mDs").value]; lays=h5Layouts(e.shape);
+    const score=L=>{ let s=0; if(det){ if(L.K===det.v[0]*det.v[1]) s+=10; if(L.patDims.length===2 && L.patDims[0]===det.v[0] && L.patDims[1]===det.v[1]) s+=5; }
+      if(scan && L.N===scan.v[0]*scan.v[1]) s+=4; if(!L.patFirst) s+=2; if(L.patDims.length===2) s+=1; if(L.N===1||L.K<16) s-=50; return s; };
+    let best=0; lays.forEach((L,i)=>{ if(score(L)>score(lays[best])) best=i; });
+    const nm=(d)=>d.join(" × ");
+    $("mLay").innerHTML=lays.map((L,i)=>`<option value="${i}">${L.patFirst? `patterns first: pattern [${nm(L.patDims)}], scan [${nm(L.scanDims)}]` : `scan [${nm(L.scanDims)}], pattern [${nm(L.patDims)}]`}${L.patDims.length===1?" (flattened)":""}</option>`).join("");
+    $("mLay").value=best; fill(); };
+  $("mDs").addEventListener("change",pick); $("mLay").addEventListener("change",fill);
+  $("mKy").addEventListener("input",()=>{ const L=lays[+$("mLay").value], r=+$("mKy").value; if(r>0 && L.K%r===0) $("mKx").value=L.K/r; });
+  $("mNy").addEventListener("input",()=>{ const L=lays[+$("mLay").value], r=+$("mNy").value; if(r>0 && L.N%r===0) $("mNx").value=L.N/r; });
+  pick();
   $("mCancel").onclick=()=>{ cleanup(); closeModal(); };
-  $("mOK").onclick=async()=>{ const e=found[+$("mDs").value]; closeModal();
-    try{ if(e.shape.length===4) await read(e); else askScanShape(e.shape[0],e.shape[1],e.shape[2],e.path,null,(r,c)=>read(e,r,c)); }catch(err){ cleanup(); showError(err); } };
+  $("mOK").onclick=async()=>{ const e=found[+$("mDs").value], L=lays[+$("mLay").value], ky=+$("mKy").value, kx=+$("mKx").value, ny=+$("mNy").value, nx=+$("mNx").value;
+    if(ky*kx!==L.K){ $("mErr").textContent=`Pattern rows × cols must equal ${L.K}.`; return; }
+    if(ny<1||nx<1||ny*nx>L.N){ $("mErr").textContent=`Scan rows × cols must be at most ${L.N}.`; return; }
+    if(L.patFirst && ny*nx!==L.N){ $("mErr").textContent=`With patterns stored first, scan rows × cols must equal ${L.N}.`; return; }
+    closeModal(); try{ await onOK(e,{...L,ky,kx,ny,nx}); }catch(err){ cleanup(); showError(err); } };
 }
 
 // ---------------------------------------------------------------- TIFF
@@ -816,6 +887,92 @@ async function loadTIFF(f){
   askScanShape(nFrames,H,W,f.name,null,(r,c)=>setData(out,r,c,H,W,f.name));
 }
 function swapBytes(b,start,len,B){ for(let i=start;i<start+len;i+=B) for(let j=0;j<B/2;j++){ const t=b[i+j]; b[i+j]=b[i+B-1-j]; b[i+B-1-j]=t; } }
+
+
+// ---------------------------------------------------------------- MATLAB .mat (v5/v7 natively; v7.3 is HDF5)
+// MATLAB arrays are column-major: A(d1,d2,d3,d4) has d1 fastest. We map them so that a pattern looks the same as
+// imagesc(A(:,:,i,j)) in MATLAB (first dimension = rows), whichever order the scan and detector dimensions come in.
+let ORD_SAVED="kkss";
+async function loadMAT(f){
+  busy(`Reading ${f.name}…`); await tick();
+  const head=new Uint8Array(await f.slice(0,1032).arrayBuffer()), txt=new TextDecoder("latin1").decode(head.subarray(0,116));
+  const isH5=o=>head[o]===0x89&&head[o+1]===0x48&&head[o+2]===0x44&&head[o+3]===0x46;
+  if(/MATLAB 7\.3/.test(txt) || isH5(0) || isH5(512) || isH5(1024)){ busy(); return loadHDF5(f,true); }
+  if(!/^MATLAB 5\.0 MAT-file/.test(txt)) throw new Error("Not a MATLAB 5/7/7.3 MAT-file (MATLAB 4 files are not supported; re-save with save(..., '-v7') or '-v7.3').");
+  if(String.fromCharCode(head[126],head[127])!=="IM") throw new Error("Big-endian MAT-files are not supported.");
+  const buf=await f.arrayBuffer(), u8=new Uint8Array(buf), dv=new DataView(buf), vars=[];
+  for(let off=128; off+8<=buf.byteLength; ){
+    const type=dv.getUint32(off,true), nb=dv.getUint32(off+4,true), body=u8.subarray(off+8, off+8+nb);
+    if(type===15){ const h=matHeader(await inflateHead(body, 4096)); if(h) vars.push({...h, z:body}); off+=8+nb; }
+    else { if(type===14){ const h=matHeader(u8.subarray(off, off+8+Math.min(nb,4096))); if(h) vars.push({...h, raw:u8.subarray(off,off+8+nb)}); } off+=8+nb; off+=(8-off%8)%8; }
+  }
+  busy();
+  const ok=vars.filter(v=>v.numeric && (v.dims.length===4 || v.dims.length===3));
+  if(!ok.length) throw new Error(`No 3D or 4D numeric arrays found${vars.length?` (variables: ${vars.map(v=>`${v.name} [${v.dims.join("×")}] ${v.cls}`).join(", ")})`:""}. Cell arrays and structs are not read; save the 4D array as its own variable.`);
+  ok.sort((a,b)=>(b.dims.length-a.dims.length)||(b.dims.reduce((x,y)=>x*y,1)-a.dims.reduce((x,y)=>x*y,1)));
+  matDialog(ok.map(v=>({name:v.name, dims:v.dims, dtype:v.cls+(v.complex?" (complex: real part used)":"")})), f.name, ()=>{}, async(i,ord,r,c)=>{
+    const v=ok[i]; busy(`${v.z?"Decompressing":"Reading"} ${v.name}…`); await tick();
+    const el = v.z ? await inflate(v.z) : v.raw;
+    const data=matData(el); await matSet(data, v.dims, ord, `${f.name}:${v.name}`, r, c);
+  });
+}
+async function inflateHead(u8, n){
+  const rd=new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate")).getReader(), parts=[]; let len=0;
+  try{ while(len<n){ const {value,done}=await rd.read(); if(done) break; parts.push(value); len+=value.length; } } catch(e){} try{ rd.cancel(); }catch(e){}
+  const out=new Uint8Array(len); let p=0; for(const x of parts){ out.set(x,p); p+=x.length; } return out;
+}
+const MAT_T={1:Int8Array,2:Uint8Array,3:Int16Array,4:Uint16Array,5:Int32Array,6:Uint32Array,7:Float32Array,9:Float64Array,12:BigInt64Array,13:BigUint64Array};
+const MAT_CLS={1:"cell",2:"struct",3:"object",4:"char",5:"sparse",6:"double",7:"single",8:"int8",9:"uint8",10:"int16",11:"uint16",12:"int32",13:"uint32",14:"int64",15:"uint64"};
+function matSub(u8, o){   // one sub-element: {type, data offset, nbytes, next offset}
+  const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength), w=dv.getUint32(o,true);
+  if(w>>>16){ return {type:w&0xffff, at:o+4, nb:w>>>16, next:o+8}; }
+  const nb=dv.getUint32(o+4,true); return {type:w, at:o+8, nb, next:o+8+nb+((8-nb%8)%8)};
+}
+function matHeader(el){   // el = full miMATRIX element (tag + body), possibly truncated after the header
+  if(el.length<16) return null; const dv=new DataView(el.buffer,el.byteOffset,el.byteLength);
+  if(dv.getUint32(0,true)!==14) return null;
+  const fl=matSub(el,8), flags=dv.getUint32(fl.at,true), cls=flags&0xff, complex=!!(flags&0x800);
+  const dm=matSub(el,fl.next), dims=[]; for(let i=0;i<dm.nb/4;i++) dims.push(dv.getInt32(dm.at+4*i,true));
+  const nm=matSub(el,dm.next), name=new TextDecoder().decode(el.subarray(nm.at,nm.at+nm.nb));
+  return {name, dims, cls:MAT_CLS[cls]||`class ${cls}`, numeric:cls>=6&&cls<=15, complex, dataAt:nm.next};
+}
+function matData(el){
+  const h=matHeader(el), d=matSub(el,h.dataAt), T=MAT_T[d.type];
+  if(!T) throw new Error(`Unsupported MAT data type ${d.type}.`);
+  return new T(el.slice(d.at, d.at+d.nb).buffer);   // copy (also fixes alignment)
+}
+function matDialog(list, fname, cleanup, onOK){
+  const opts=list.map((d,i)=>`<option value="${i}">${d.name}  [${d.dims.join("×")}] ${d.dtype}</option>`).join("");
+  modal(`<h3>MATLAB file: choose an array</h3>
+    <div class="hint">Sizes are shown as in MATLAB, size(A). Each pattern is shown as imagesc(A(:,:,…)) would show it (first dimension = rows).</div>
+    <div class="grid"><label>Variable</label><select id="mDs">${opts}</select>
+      <label>Dimension order</label><select id="mOrd"><option value="kkss">(k rows, k cols, scan rows, scan cols): detector first</option><option value="sskk">(scan rows, scan cols, k rows, k cols): scan first</option><option value="kkts">(k rows, k cols, scan cols, scan rows): detector first, x before y</option></select></div>
+    <div class="hint" id="mH"></div>
+    <div class="actions"><button id="mCancel">Cancel</button><button class="primary" id="mOK">Load</button></div>`);
+  const guess=()=>{ const d=list[+$("mDs").value].dims, three=d.length===3;
+    $("mOrd").disabled=three; if(!three) { const sqK=d[0]===d[1], sqS=d[2]===d[3];   // the detector is usually the square pair; if both or neither are square, assume detector first unless the trailing pair is clearly larger
+      $("mOrd").value = (sqS && !sqK) || (!sqS && !sqK && d[2]*d[3]>d[0]*d[1]) ? "sskk" : "kkss"; }
+    $("mH").textContent = three? `3D array: read as (k rows, k cols, frames) and you will be asked for the scan shape; frames fill the scan row by row.` : ""; };
+  $("mDs").addEventListener("change",guess); guess();
+  $("mCancel").onclick=()=>{ cleanup(); closeModal(); };
+  $("mOK").onclick=async()=>{ const i=+$("mDs").value, ord=$("mOrd").value, d=list[i]; closeModal();
+    try{ if(d.dims.length===4) await onOK(i,ord); else askScanShape(d.dims[2],d.dims[0],d.dims[1],d.name,null,(r,c)=>onOK(i,ord,r,c)); }catch(e){ cleanup(); showError(e); } };
+}
+// column-major MATLAB data → our row-major (scan row, scan col, k row, k col)
+async function matSet(src, dims, ord, name, rows, cols){
+  busy("Reordering MATLAB (column-major) data…"); await tick();
+  let ky,kx,ny,nx, sKy,sKx,sY,sX;   // strides into the column-major source
+  const st=[1]; for(let i=1;i<dims.length;i++) st[i]=st[i-1]*dims[i-1];
+  if(dims.length===3){ [ky,kx]=dims; ny=rows; nx=cols; sKy=st[0]; sKx=st[1]; sY=st[2]*nx; sX=st[2]; }
+  else if(ord==="sskk"){ [ny,nx,ky,kx]=dims; sY=st[0]; sX=st[1]; sKy=st[2]; sKx=st[3]; }
+  else if(ord==="kkts"){ [ky,kx,nx,ny]=dims; sKy=st[0]; sKx=st[1]; sX=st[2]; sY=st[3]; }
+  else { [ky,kx,ny,nx]=dims; sKy=st[0]; sKx=st[1]; sY=st[2]; sX=st[3]; }
+  const out=new src.constructor(ny*nx*ky*kx); let o=0;
+  for(let y=0;y<ny;y++){ for(let x=0;x<nx;x++){ const b=y*sY+x*sX;
+      for(let r=0;r<ky;r++){ const br=b+r*sKy; for(let c=0;c<kx;c++) out[o++]=src[br+c*sKx]; } }
+    if((y&7)===7){ busy(`Reordering MATLAB (column-major) data… ${Math.round(100*y/ny)}%`); await tick(); } }
+  busy(); await setData(out,ny,nx,ky,kx,name);
+}
 
 // ---------------------------------------------------------------- NPY
 async function loadNPY(f){
@@ -1065,7 +1222,7 @@ function useACBF(){
 }
 async function runACBF(over){
   const job= over? -1 : ++acbfJob, key=acbfKey(), t0=performance.now(), live=()=> over || job===acbfJob;
-  const {data,K,kx,nx,ny}=S, P=tcParams(), {idx,cx,cy}=bfPixels(); if(over){ P.df=over.df; P.up=over.up||1; } const u=P.up;
+  const {data,K,kx,nx,ny}=S, P=tcParams(), {idx,cx,cy}=bfPixels(); if(over){ P.df=over.df; P.up=over.up||1; if(over.st) P.st=over.st; } const u=P.up;
   const V=(+$("acKV").value||300)*1e3, lam=12.2643/Math.sqrt(V*(1+0.97848e-6*V)), Cs=(+$("acCs").value||0)*1e7, eps=Math.max(0,+$("acEps").value||0);
   const mr=P.mr*1e-3, kap=acAlpha()*1e-3/lam, kap2=kap*kap;
   let Pn=1; while(Pn<Math.max(nx,ny)) Pn<<=1; const fft=makeFFT(Pn), NN=Pn*Pn;
@@ -1108,22 +1265,40 @@ async function runACBF(over){
 
 // Refine Δf by maximising ACBF image variance (interior 70%). Unlike the tcBF shift fit, this is not biased by
 // crystal periodicity: verified to peak at the true Δf on the WS2 crystal and the single-atom demos.
-async function refineACBF(){
-  if(!S.data) return; const df0=+$("tcDf").value||0, span=Math.max(150, Math.abs(df0)*0.6);
-  const score=async df=>{ const r=await runACBF({df, up:1}); const {img:a,W,H}=r, bx=Math.round(W*0.15), by=Math.round(H*0.15); let s=0,s2=0,c=0;
-    for(let y=by;y<H-by;y++) for(let x=bx;x<W-bx;x++){ const v=a[y*W+x]; if(Number.isFinite(v)){ s+=v; s2+=v*v; c++; } } const m=s/c; return s2/c-m*m; };
-  const pts=[]; const n=9;
-  for(let i=0;i<n;i++){ const df=df0-span+2*span*i/(n-1); busy(`Refining Δf… ${i+1}/${n+4}`); await tick(); pts.push([df, await score(df)]); }
+// Contrast (variance of the central 70% of the ACBF phase image) as a function of defocus and scan step.
+async function acbfScore(df, st){ const r=await runACBF({df, up:1, st}); const {img:a,W,H}=r, bx=Math.round(W*0.15), by=Math.round(H*0.15); let s=0,s2=0,c=0;
+  for(let y=by;y<H-by;y++) for(let x=bx;x<W-bx;x++){ const v=a[y*W+x]; if(Number.isFinite(v)){ s+=v; s2+=v*v; c++; } } const m=s/c; return s2/c-m*m; }
+// 1D maximisation: coarse scan of n points over [lo, hi] (in a transformed coordinate u), then golden-section on the best bracket.
+async function maximise1D(f, lo, hi, n, gold, label, toX=u=>u){
+  const pts=[]; for(let i=0;i<n;i++){ const u=lo+(hi-lo)*i/(n-1); busy(`${label}… ${i+1}/${n+gold}`); await tick(); pts.push([u, await f(toX(u))]); }
   let bi=0; pts.forEach((p,i)=>{ if(p[1]>pts[bi][1]) bi=i; });
-  let lo=pts[Math.max(0,bi-1)][0], hi=pts[Math.min(n-1,bi+1)][0];
-  // golden-section on the bracket
-  const gr=(Math.sqrt(5)-1)/2; let a=lo, b=hi, c1=b-gr*(b-a), c2=a+gr*(b-a), f1=await score(c1), f2=await score(c2);
-  for(let it=0; it<4; it++){ busy(`Refining Δf… ${n+it+1}/${n+4}`); await tick(); if(f1>f2){ b=c2; c2=c1; f2=f1; c1=b-gr*(b-a); f1=await score(c1); } else { a=c1; c1=c2; f1=f2; c2=a+gr*(b-a); f2=await score(c2); } }
-  const best=(a+b)/2; busy();
-  const edge = bi===0||bi===n-1;
-  $("tcDf").value=+best.toFixed(1); S.acNote=`refined Δf = ${best.toFixed(1)} Å${edge?" (at edge of search: press again)":""}`; $("acInfo").textContent=S.acNote; $("tcInfo").textContent=S.acNote;
+  const gr=(Math.sqrt(5)-1)/2; let a=pts[Math.max(0,bi-1)][0], b=pts[Math.min(n-1,bi+1)][0], c1=b-gr*(b-a), c2=a+gr*(b-a), f1=await f(toX(c1)), f2=await f(toX(c2));
+  for(let it=0; it<gold; it++){ busy(`${label}… ${n+it+1}/${n+gold}`); await tick(); if(f1>f2){ b=c2; c2=c1; f2=f1; c1=b-gr*(b-a); f1=await f(toX(c1)); } else { a=c1; c1=c2; f1=f2; c2=a+gr*(b-a); f2=await f(toX(c2)); } }
+  return {x:toX((a+b)/2), edge: bi===0||bi===n-1};
+}
+function acNoteSet(t){ S.acNote=t; $("acInfo").textContent=t; $("tcInfo").textContent=t; }
+async function refineDf(st){ const df0=+$("tcDf").value||0, span=Math.max(150, Math.abs(df0)*0.6);
+  return maximise1D(df=>acbfScore(df, st), df0-span, df0+span, 9, 4, "Refining Δf"); }
+async function refineACBF(){
+  if(!S.data) return; const st=+$("tcSt").value||1, r=await refineDf(st); busy();
+  $("tcDf").value=+r.x.toFixed(1); acNoteSet(`refined Δf = ${r.x.toFixed(1)} Å${r.edge?" (at edge of search: press again)":""}`); update(true,false);
+}
+// Scan step: searched on a log scale (×0.6 … ×1.6), then Δf is re-refined at the new step and the step polished once more,
+// because a wrong step makes the best-contrast Δf shift too.
+async function refineStep(){
+  if(!S.data) return; const st0=+$("tcSt").value||1, df=()=>+$("tcDf").value||0;
+  if(!(df()!==0 || (+$("acCs").value||0)!==0)) throw new Error("Refine step needs a non-zero Δf (or Cs): in focus, the bright-field images do not depend on the step. Set or refine Δf first.");
+  const r1=await maximise1D(st=>acbfScore(df(), st), Math.log(0.6), Math.log(1.6), 11, 4, "Refining step", u=>st0*Math.exp(u));
+  const r2=await refineDf(r1.x); let st=r1.x, d=r2.x;
+  for(let round=0; round<2; round++){   // alternate narrow Δf and step searches: the two are correlated (the shifts depend on Δf/step)
+    const sp=Math.max(30, 0.2*Math.abs(d));
+    d=(await maximise1D(x=>acbfScore(x, st), d-sp, d+sp, 7, 4, `Polishing Δf (${round+1}/2)`)).x;
+    st=(await maximise1D(x=>acbfScore(d, x), Math.log(st*0.93), Math.log(st*1.07), 5, 4, `Polishing step (${round+1}/2)`, Math.exp)).x; }
+  busy(); $("tcSt").value=+st.toFixed(4); $("tcDf").value=+d.toFixed(1);
+  acNoteSet(`refined step = ${st.toFixed(4)} Å (was ${st0}), Δf = ${d.toFixed(1)} Å${r1.edge?" (step at edge of ×0.6–1.6 search: press again)":r2.edge?" (Δf at edge of search: press again)":""}`);
   update(true,false);
 }
+$("acRefSt").addEventListener("click",()=>refineStep().catch(e=>{ busy(); showError(e); }));
 $("acRef").addEventListener("click",()=>refineACBF().catch(e=>{ busy(); showError(e); }));
 
 // ---------------------------------------------------------------- single-slice iterative ptychography (ePIE-style, mixed-state probe)
